@@ -41,3 +41,27 @@ python tools/validate_result_bundle.py data/uploads/example_motivation_bundle.zi
 Documentation:
 docs/result_bundle_format.md
 
+
+## Etapa 2: API backend
+
+Run the API locally:
+
+source .venv/bin/activate
+cd services/api
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+Open:
+http://localhost:8000/docs
+
+Test health:
+curl http://localhost:8000/health
+
+Upload a result bundle:
+curl -F "file=@data/uploads/example_motivation_bundle.zip" \
+  http://localhost:8000/uploads/results
+
+List runs:
+curl http://localhost:8000/runs
+
+List jobs:
+curl http://localhost:8000/jobs
