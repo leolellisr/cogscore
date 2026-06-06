@@ -1,0 +1,22 @@
+services:
+  # Etapa 5:
+  # api:
+  #   build: ./services/api
+  #
+  # worker:
+  #   build: ./services/worker
+  #
+  # web:
+  #   build: ./services/web
+  #
+  # postgres:
+  #   image: postgres:16
+  #
+  # sim-vnc:
+  #   build: ./services/sim-vnc
+  #
+  # proxy:
+  #   image: caddy:2
+
+volumes:
+  # Future named volumes can be declared here.

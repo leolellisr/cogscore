@@ -1,0 +1,18 @@
+agent_name: Substage1
+architecture_name: CONAIM
+benchmark: attention_posner
+benchmark_version: posner_v1
+cogscore_version: "0.1.0"
+run_name: "Substage1 Posner attention example"
+date: "2026-06-06"
+
+parameters:
+  episodes: 50
+  seed: 777
+  x_points: 50
+  smooth_window: 7
+
+source:
+  type: uploaded_results
+  author: Leonardo
+  notes: "Example Posner attention run manifest."
