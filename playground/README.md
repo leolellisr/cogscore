@@ -23,3 +23,21 @@ cogscore-playground/
 ├── data/         # Persistent data, not tracked by Git
 ├── docs/         # Documentation
 └── external/     # External repositories, such as cogscore
+
+
+
+##  Result bundle validation
+
+A CogScore result bundle is a `.zip` file containing:
+
+manifest.yaml
+benchmark_out/
+
+To validate a bundle:
+source .venv/bin/activate
+
+python tools/validate_result_bundle.py data/uploads/example_motivation_bundle.zip
+
+Documentation:
+docs/result_bundle_format.md
+

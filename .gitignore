@@ -1,0 +1,4 @@
+# Local temporary test bundles
+tmp/
+temp/
+*.tmp
