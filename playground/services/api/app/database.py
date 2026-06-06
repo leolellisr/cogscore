@@ -248,6 +248,111 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
     return row_to_dict(row)
 
+def get_next_pending_job(job_type: str | None = None) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        if job_type is None:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 1
+                """
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE status = 'pending'
+                AND job_type = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (job_type,),
+            ).fetchone()
+
+    return row_to_dict(row)
+
+
+def update_job_status(
+    *,
+    job_id: str,
+    status: str,
+    output_data: dict[str, Any] | None = None,
+    log_path: str | None = None,
+    error_message: str | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = ?,
+                output_json = COALESCE(?, output_json),
+                log_path = COALESCE(?, log_path),
+                error_message = ?,
+                started_at = COALESCE(?, started_at),
+                finished_at = COALESCE(?, finished_at)
+            WHERE id = ?
+            """,
+            (
+                status,
+                json.dumps(output_data, ensure_ascii=False) if output_data is not None else None,
+                log_path,
+                error_message,
+                started_at,
+                finished_at,
+                job_id,
+            ),
+        )
+
+        conn.commit()
+
+
+def mark_job_running(job_id: str, log_path: str | None = None) -> None:
+    update_job_status(
+        job_id=job_id,
+        status="running",
+        log_path=log_path,
+        started_at=utc_now_iso(),
+    )
+
+
+def mark_job_done(
+    *,
+    job_id: str,
+    output_data: dict[str, Any] | None = None,
+    log_path: str | None = None,
+) -> None:
+    update_job_status(
+        job_id=job_id,
+        status="done",
+        output_data=output_data,
+        log_path=log_path,
+        error_message=None,
+        finished_at=utc_now_iso(),
+    )
+
+
+def mark_job_error(
+    *,
+    job_id: str,
+    error_message: str,
+    output_data: dict[str, Any] | None = None,
+    log_path: str | None = None,
+) -> None:
+    update_job_status(
+        job_id=job_id,
+        status="error",
+        output_data=output_data,
+        log_path=log_path,
+        error_message=error_message,
+        finished_at=utc_now_iso(),
+    )
+
 
 def list_plot_files() -> list[dict[str, Any]]:
     from .config import PLOTS_DIR
