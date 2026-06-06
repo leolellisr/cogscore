@@ -27,6 +27,7 @@ from app.database import (  # noqa: E402
     get_next_pending_job,
     get_run,
     init_db,
+    list_runs,
     mark_job_done,
     mark_job_error,
     mark_job_running,
@@ -117,52 +118,112 @@ def list_generated_plot_files(out_dir: Path) -> list[str]:
     return files
 
 
-def build_plot_input_root(
+def latest_runs_for_benchmark(benchmark: str) -> list[dict[str, Any]]:
+    """
+    Return the latest imported run for each agent for a given benchmark.
+
+    Example:
+        benchmark = motivation
+
+    If the database has:
+        Substage1 motivation run A
+        Substage1 motivation run B
+        Substage3 motivation run C
+
+    This function returns:
+        Substage1 run B
+        Substage3 run C
+
+    because B is newer than A.
+    """
+
+    all_runs = list_runs()
+
+    selected_by_agent: dict[str, dict[str, Any]] = {}
+
+    for run in all_runs:
+        if str(run.get("benchmark")) != benchmark:
+            continue
+
+        agent_name = str(run.get("agent_name", "unnamed"))
+        benchmark_out_path = Path(str(run.get("benchmark_out_path", "")))
+
+        if not benchmark_out_path.exists():
+            info(
+                f"Skipping run {run.get('id')} for agent {agent_name}: "
+                f"benchmark_out path does not exist: {benchmark_out_path}"
+            )
+            continue
+
+        # list_runs() returns newest first, so keep the first one per agent.
+        if agent_name not in selected_by_agent:
+            selected_by_agent[agent_name] = run
+
+    return list(selected_by_agent.values())
+
+
+def build_plot_input_root_for_benchmark(
     *,
     job_id: str,
-    agent_name: str,
-    benchmark_out_path: Path,
-) -> Path:
+    benchmark: str,
+) -> tuple[Path, list[dict[str, Any]]]:
     """
-    The plot scripts expect a structure like:
+    Build the plot input root using all latest runs from the same benchmark.
+
+    The plot scripts expect:
 
         root/
-        └── AGENT_NAME/
+        ├── Substage1/
+        │   └── benchmark_out/
+        └── Substage3/
             └── benchmark_out/
-                ├── csv files
 
-    But imported runs are stored as:
+    This function creates that structure under:
 
-        data/results/AGENT/benchmark/run_xxx/benchmark_out/
-
-    So for each job we create a temporary plotting input folder:
-
-        data/jobs/JOB_ID/plot_input/AGENT_NAME/benchmark_out -> symlink to real benchmark_out
+        data/jobs/{job_id}/plot_input/
     """
+
+    runs = latest_runs_for_benchmark(benchmark)
+
+    if not runs:
+        raise RuntimeError(f"No imported runs found for benchmark: {benchmark}")
 
     job_dir = JOBS_DIR / job_id
     plot_input_root = job_dir / "plot_input"
 
     remove_dir_if_exists(plot_input_root)
+    plot_input_root.mkdir(parents=True, exist_ok=True)
 
-    agent_slug = safe_slug(agent_name)
+    included_agents = []
 
-    agent_dir = plot_input_root / agent_slug
-    agent_dir.mkdir(parents=True, exist_ok=True)
+    for run in runs:
+        agent_name = str(run["agent_name"])
+        agent_slug = safe_slug(agent_name)
+        benchmark_out_path = Path(str(run["benchmark_out_path"]))
 
-    link_path = agent_dir / "benchmark_out"
+        agent_dir = plot_input_root / agent_slug
+        agent_dir.mkdir(parents=True, exist_ok=True)
 
-    symlink_or_copytree(benchmark_out_path, link_path)
+        link_path = agent_dir / "benchmark_out"
 
-    return plot_input_root
+        symlink_or_copytree(benchmark_out_path, link_path)
+
+        included_agents.append(agent_name)
+
+    info(
+        "Agents included in plot input for benchmark "
+        + benchmark
+        + ": "
+        + ", ".join(included_agents)
+    )
+
+    return plot_input_root, runs
 
 
 def run_plot_script(
     *,
     job_id: str,
     benchmark: str,
-    agent_name: str,
-    benchmark_out_path: Path,
 ) -> dict[str, Any]:
     if benchmark not in BENCHMARK_TO_SCRIPT:
         raise ValueError(f"Unsupported benchmark for plotting: {benchmark}")
@@ -172,22 +233,19 @@ def run_plot_script(
     if not script_path.exists():
         raise FileNotFoundError(f"Plot script not found: {script_path}")
 
-    if not benchmark_out_path.exists():
-        raise FileNotFoundError(f"benchmark_out path not found: {benchmark_out_path}")
-
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
     stdout_path = job_dir / "stdout.log"
     stderr_path = job_dir / "stderr.log"
 
-    plot_input_root = build_plot_input_root(
+    plot_input_root, included_runs = build_plot_input_root_for_benchmark(
         job_id=job_id,
-        agent_name=agent_name,
-        benchmark_out_path=benchmark_out_path,
+        benchmark=benchmark,
     )
 
-    out_dir = PLOTS_DIR / benchmark / safe_slug(agent_name) / job_id
+    out_dir = PLOTS_DIR / benchmark / "comparison" / job_id
+
     remove_dir_if_exists(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -225,6 +283,9 @@ def run_plot_script(
         "stderr_log": str(stderr_path),
         "plot_input_root": str(plot_input_root),
         "output_dir": str(out_dir),
+        "included_agents": [str(run["agent_name"]) for run in included_runs],
+        "included_run_ids": [str(run["id"]) for run in included_runs],
+        "included_benchmark_out_paths": [str(run["benchmark_out_path"]) for run in included_runs],
         "generated_files": generated_files,
         "generated_file_count": len(generated_files),
     }
@@ -249,14 +310,10 @@ def handle_replot_job(job: dict[str, Any]) -> None:
         raise ValueError(f"Run not found: {run_id}")
 
     benchmark = str(run["benchmark"])
-    agent_name = str(run["agent_name"])
-    benchmark_out_path = Path(str(run["benchmark_out_path"]))
 
     result = run_plot_script(
         job_id=job_id,
         benchmark=benchmark,
-        agent_name=agent_name,
-        benchmark_out_path=benchmark_out_path,
     )
 
     if result["return_code"] != 0:
@@ -277,6 +334,8 @@ def handle_replot_job(job: dict[str, Any]) -> None:
 
     info(
         f"Job {job_id} done. "
+        f"Benchmark={benchmark}. "
+        f"Agents={', '.join(result['included_agents'])}. "
         f"Generated {result['generated_file_count']} plot files."
     )
 
