@@ -1,0 +1,68 @@
+Terminal 1 
+
+cd ~/git/cogscore
+source .venv/bin/activate
+cd playground/services/api
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+
+Terminal 2
+
+cd ~/git/cogscore
+source .venv/bin/activate
+cd playground/services/web
+streamlit run app.py --server.address 0.0.0.0 --server.port 8501
+
+
+Terminal 3
+
+cd ~/git/cogscore
+source .venv/bin/activate
+cd playground/services/worker
+python -m worker.main
+
+
+## Apagar plots antigos de um-agente-só
+
+rm -rf data/plots/motivation
+rm -rf data/plots/attention_posner
+
+
+## Upload results to bundle
+
+python3 tools/create_result_bundle.py \
+  --benchmark-out data/uploads/real_results/sensory/Substage3_QL/benchmark_out \
+  --output data/uploads/real_results/sensory/Substage3_QL_sensory.zip \
+  --agent-name Substage3_QL \
+  --architecture-name CONAIM \
+  --benchmark sensory_buffer \
+  --benchmark-version sensory_v1 \
+  --run-name "Substage3_QL sensory results" \
+  --episodes 50 \
+  --seed 777 \
+  --notes "Existing Substage3_QL sensory results imported for comparison."
+  
+  ## Enviar results
+  
+  curl -F "file=@data/uploads/real_results/sensory/Substage1_QL_Noise_sensory.zip" \
+  http://localhost:8000/uploads/results
+  
+  
+## Criar novos jobs de comparação
+
+cd ~/git/cogscore
+source .venv/bin/activate
+
+python3 playground/tools/create_comparison_replot_jobs.py --benchmark motivation
+python3 playground/tools/create_comparison_replot_jobs.py --benchmark attention_posner
+
+
+
+
+
+## Save merge
+
+
+python mot.py --save-merged-data
+
+
