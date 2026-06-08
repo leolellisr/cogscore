@@ -19,6 +19,8 @@ ALLOWED_BENCHMARKS = {
 CURRENTLY_SUPPORTED_BENCHMARKS = {
     "motivation",
     "attention_posner",
+    "sensory_buffer",
+    "learning",
 }
 
 REQUIRED_MANIFEST_FIELDS = [

@@ -151,7 +151,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark",
         required=True,
-        choices=["motivation", "attention_posner", "sensory_buffer"],
+        choices=["motivation", "attention_posner"],
         help="Benchmark name.",
     )
 

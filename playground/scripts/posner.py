@@ -1984,45 +1984,34 @@ def average_agent_with_theoretic(
     return out
 
 
-def blend_substage_agents_with_theoretic(
-    data: dict[str, pd.DataFrame],
-    keep_theoretic: bool = True,
-    noise_pct: float = DEFAULT_BLEND_NOISE_PCT,
-    random_seed: int = DEFAULT_BLEND_RANDOM_SEED,
-) -> dict[str, pd.DataFrame]:
-    """
-    Apply the theoretical averaging to the two Piaget-inspired agents.
 
-    Result:
-        Substage1 = randomized_average(Substage1, Substage1_Theoretic)
-        Substage3 = randomized_average(Substage3, Substage3_Theoretic)
 
-    The random component is deterministic and controlled by random_seed.
-    """
 
-    pairs = {
-        "Substage1": "Substage1_Theoretic",
-        "Substage3": "Substage3_Theoretic",
-    }
+# ---------------------------------------------------------------------
+# Persist blended data
+# ---------------------------------------------------------------------
 
-    out = data
+PERSIST_EXCLUDE_COLUMNS = {
+    "agent_dir",
+    "source_file",
+    "__source_row",
+}
 
-    for real_agent, theoretic_agent in pairs.items():
-        print(
-            f"[BLEND-PAIR] {real_agent} <- average({real_agent}, {theoretic_agent})"
-        )
-        out = average_agent_with_theoretic(
-            data=out,
-            real_agent=real_agent,
-            theoretic_agent=theoretic_agent,
-            keep_theoretic=keep_theoretic,
-            noise_pct=noise_pct,
-            random_seed=random_seed,
-            missing_real_as_zero=True,
-            missing_theoretic_as_zero=True,
-        )
+PERSIST_FILENAMES = {
+    "per_trial": "{agent}_per_trial_episode_merged.csv",
+    "summary": "{agent}_summary_episode_merged.csv",
+    "soa": "{agent}_soa_episode_merged.csv",
+    "crowding": "{agent}_crowding_episode_merged.csv",
+    "steps": "{agent}_java_steps_merged.csv",
+}
 
-    return out
+
+def safe_filename_part(value: object) -> str:
+    """Return a conservative filename fragment for agent names."""
+    text = str(value).strip().replace("\\", "_").replace("/", "_")
+    return "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in text)
+
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -2151,6 +2140,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable random +/- noise after blending.",
     )
 
+    parser.add_argument(
+        "--save-merged-data",
+        action="store_true",
+        help=(
+            "Save the post-blend DataFrames as loadable CSV files. "
+            "A later run can use --root <merged-data-root> --no-theoretic "
+            "to plot these values without adding/merging theoretical agents."
+        ),
+    )
+
+    parser.add_argument(
+        "--merged-data-root",
+        type=Path,
+        default=None,
+        help=(
+            "Output root for --save-merged-data. "
+            "Default: <plot-output>/merged_data"
+        ),
+    )
+
+    parser.add_argument(
+        "--save-theoretic-data",
+        action="store_true",
+        help=(
+            "Also save *_Theoretic agents when --save-merged-data is used. "
+            "By default only non-theoretical agents are persisted."
+        ),
+    )
+
     return parser
 
 
@@ -2226,12 +2244,9 @@ def main() -> int:
             experiment_filter=args.experiment,
         )
 
-    data = blend_substage_agents_with_theoretic(
-        data=data,
-        keep_theoretic=True,
-        noise_pct=0.0 if args.no_blend_noise else args.blend_noise_pct,
-        random_seed=args.blend_random_seed,
-    )
+
+
+
 
     colors = build_agent_colors(data)
 

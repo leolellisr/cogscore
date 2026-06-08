@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import re
 from pathlib import Path
+from typing import Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -57,18 +59,27 @@ def read_csv_auto(path: Path) -> pd.DataFrame:
     return df
 
 
-def discover_files(root: Path, kind: str) -> list[Path]:
+def discover_files(
+    root: Path,
+    kind: str,
+    benchmark_dir_name: str = "benchmark_out",
+) -> list[Path]:
     if kind == "per_trial":
-        pattern = "*/benchmark_out/vision_sperling_per_trial_episode_*_active.csv"
+        filename_pattern = "vision_sperling_per_trial_episode_*_active.csv"
     elif kind == "summary":
-        pattern = "*/benchmark_out/vision_sperling_summary_episode_*_active.csv"
+        filename_pattern = "vision_sperling_summary_episode_*_active.csv"
     else:
         raise ValueError(f"Unknown kind: {kind}")
+
+    pattern = f"*/{benchmark_dir_name}/{filename_pattern}"
     return sorted(root.glob(pattern))
 
 
-def load_per_trial(root: Path) -> pd.DataFrame:
-    files = discover_files(root, "per_trial")
+def load_per_trial(
+    root: Path,
+    benchmark_dir_name: str = "benchmark_out",
+) -> pd.DataFrame:
+    files = discover_files(root, "per_trial", benchmark_dir_name)
     print(f"[info] per-trial files found: {len(files)}")
 
     if not files:
@@ -130,8 +141,11 @@ def load_per_trial(root: Path) -> pd.DataFrame:
     return df
 
 
-def load_summary(root: Path) -> pd.DataFrame:
-    files = discover_files(root, "summary")
+def load_summary(
+    root: Path,
+    benchmark_dir_name: str = "benchmark_out",
+) -> pd.DataFrame:
+    files = discover_files(root, "summary", benchmark_dir_name)
     print(f"[info] summary files found: {len(files)}")
 
     if not files:
@@ -920,16 +934,87 @@ def plot_heatmaps(per_trial: pd.DataFrame, out_dir: Path) -> list[Path]:
     return saved
 
 
-def main() -> None:
-    root = INPUT_DIR
-    out = OUTPUT_DIR
+
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plot Sperling sensory-buffer benchmark results."
+    )
+
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=INPUT_DIR,
+        help=(
+            "Root folder containing AGENT_NAME/benchmark_out folders. "
+            f"Default: {INPUT_DIR}"
+        ),
+    )
+
+    parser.add_argument(
+        "--out",
+        "--output",
+        dest="out",
+        type=Path,
+        default=OUTPUT_DIR,
+        help=(
+            "Output directory for plots and derived CSV files. "
+            f"Default: {OUTPUT_DIR}"
+        ),
+    )
+
+    parser.add_argument(
+        "--benchmark-dir-name",
+        type=str,
+        default="benchmark_out",
+        help=(
+            "Benchmark output folder name inside each agent folder. "
+            "Default: benchmark_out."
+        ),
+    )
+
+    parser.add_argument(
+        "--no-theoretic",
+        action="store_true",
+        help=(
+            "Accepted for compatibility with the playground worker. "
+            "Sperling currently does not add theoretical agents."
+        ),
+    )
+
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help=(
+            "Accepted for compatibility. This script uses the Agg backend "
+            "and does not open interactive windows."
+        ),
+    )
+
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = parse_args(argv)
+
+    root = args.root
+    out = args.out
+    benchmark_dir_name = args.benchmark_dir_name
+
     out.mkdir(parents=True, exist_ok=True)
 
-    print(f"[info] input dir:  {root}")
-    print(f"[info] output dir: {out}")
+    print(f"[info] input root:          {root}")
+    print(f"[info] benchmark dir name:  {benchmark_dir_name}")
+    print(f"[info] output dir:          {out}")
 
-    per_trial = load_per_trial(root)
-    summary = load_summary(root)
+    per_trial = load_per_trial(
+        root=root,
+        benchmark_dir_name=benchmark_dir_name,
+    )
+
+    summary = load_summary(
+        root=root,
+        benchmark_dir_name=benchmark_dir_name,
+    )
 
     print(f"[info] loaded per-trial rows: {len(per_trial)}")
     print(f"[info] loaded summary rows:   {len(summary)}")
@@ -992,7 +1077,6 @@ def main() -> None:
         random_state=42,
     )
 
-
     plot_fidelity_line(
         fidelity_stats,
         out / "fidelity_by_delay_nsperling.png",
@@ -1002,8 +1086,20 @@ def main() -> None:
         random_state=42,
     )
 
+    plot_fidelity_boxplot(
+        per_trial,
+        out / "fidelity_by_delay_boxplot.png",
+        common_only=True,
+    )
+
+    plot_heatmaps(
+        per_trial,
+        out,
+    )
+
     print("[done] sperling analysis finished")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -39,6 +39,7 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 BENCHMARK_TO_SCRIPT = {
     "motivation": SCRIPTS_DIR / "mot.py",
     "attention_posner": SCRIPTS_DIR / "posner.py",
+    "sensory_buffer": SCRIPTS_DIR / "sperling.py",
 }
 
 

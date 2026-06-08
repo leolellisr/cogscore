@@ -1901,42 +1901,111 @@ def average_agent_with_theoretic(
 
     return out
 
-def blend_substage_agents_with_theoretic(
+
+
+
+# ---------------------------------------------------------------------
+# Persist blended data
+# ---------------------------------------------------------------------
+
+PERSIST_EXCLUDE_COLUMNS = {
+    "agent_dir",
+    "source_file",
+    "__source_row",
+}
+
+PERSIST_FILENAMES = {
+    "summary": "{agent}_summary_episode_merged.csv",
+    "per_trial": "{agent}_per_trial_episode_merged.csv",
+    "steps": "{agent}_java_steps_merged.csv",
+}
+
+
+def safe_filename_part(value: object) -> str:
+    """Return a conservative filename fragment for agent names."""
+    text = str(value).strip().replace("\\", "_").replace("/", "_")
+    return "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in text)
+
+
+def save_data_in_original_formats(
     data: dict[str, pd.DataFrame],
-    keep_theoretic: bool = True,
-    noise_pct: float = DEFAULT_BLEND_NOISE_PCT,
-    random_seed: int = DEFAULT_BLEND_RANDOM_SEED,
-) -> dict[str, pd.DataFrame]:
+    root: Path,
+    benchmark_dir_name: str,
+    include_theoretic: bool = False,
+) -> None:
     """
-    Apply the theoretical averaging to the two Piaget-inspired agents.
+    Save the current in-memory data dictionary back to loadable CSV files.
 
-    Result:
-        Substage1 = randomized_average(Substage1, Substage1_Theoretic)
-        Substage3 = randomized_average(Substage3, Substage3_Theoretic)
+    The output keeps the same folder convention used by load_all_agents:
 
-    The random component is deterministic and controlled by random_seed.
+        root / AGENT_NAME / benchmark_dir_name / CSV_FILES
+
+    The CSV names intentionally match FILE_PATTERNS, so a later run can load
+    this root with --no-theoretic and plot the already-blended values directly.
+    Runtime-only columns added by this comparison script are omitted.
     """
+    ensure_output_dir(root)
 
-    pairs = {
-        "Substage1": "Substage1_Theoretic",
-        "Substage3": "Substage3_Theoretic",
-    }
+    saved_files: list[Path] = []
 
-    out = data
+    for key, df in data.items():
+        if df.empty or "agent" not in df.columns:
+            continue
 
-    for real_agent, theoretic_agent in pairs.items():
-        out = average_agent_with_theoretic(
-            data=out,
-            real_agent=real_agent,
-            theoretic_agent=theoretic_agent,
-            keep_theoretic=keep_theoretic,
-            noise_pct=noise_pct,
-            random_seed=random_seed,
-            missing_real_as_zero=True,
-            missing_theoretic_as_zero=True,
-        )
+        filename_template = PERSIST_FILENAMES.get(key)
 
-    return out
+        if filename_template is None:
+            continue
+
+        for agent, agent_df in df.groupby("agent", dropna=False):
+            agent_name = str(agent)
+
+            if not include_theoretic and agent_name.endswith("_Theoretic"):
+                continue
+
+            safe_agent = safe_filename_part(agent_name)
+            out_dir = root / safe_agent / benchmark_dir_name
+            ensure_output_dir(out_dir)
+
+            out_df = agent_df.copy()
+            out_df = out_df.drop(
+                columns=[c for c in PERSIST_EXCLUDE_COLUMNS if c in out_df.columns],
+                errors="ignore",
+            )
+
+            # Keep a deterministic column order: identifiers first, then metrics.
+            first_cols = [
+                c for c in [
+                    "agent",
+                    "motivation_experiment_id",
+                    "episode",
+                    "trial_index",
+                    "trial_id",
+                    "condition",
+                    "target_label",
+                    "target_role",
+                    "alternative_label",
+                    "control_label",
+                    "goal_label",
+                    "devalued_label",
+                    "status",
+                    "phase",
+                ]
+                if c in out_df.columns
+            ]
+            remaining_cols = [c for c in out_df.columns if c not in first_cols]
+            out_df = out_df[first_cols + remaining_cols]
+
+            path = out_dir / filename_template.format(agent=safe_agent)
+            out_df.to_csv(path, index=False)
+            saved_files.append(path)
+
+    if saved_files:
+        print(f"[SAVED] Persisted loadable CSV data to: {root.resolve()}")
+        for path in saved_files:
+            print(f"  {path.resolve()}")
+    else:
+        print("[WARN] No CSV data was available to persist.", file=sys.stderr)
 
 # ---------------------------------------------------------------------
 # CLI
@@ -1946,7 +2015,7 @@ def blend_substage_agents_with_theoretic(
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot Marta motivation benchmark results with theoretical reference agents.")
     parser.add_argument("--root", type=Path, default=Path("results/output"), help="Root directory containing agent result folders.")
-    parser.add_argument("--benchmark-dir-name", default="motivation_out", help="Benchmark output folder name inside each agent folder.")
+    parser.add_argument("--benchmark-dir-name", default="benchmark_out", help="Benchmark output folder name inside each agent folder.")
     parser.add_argument("--out", type=Path, default=Path("results/motivation_plots"), help="Output directory for PNG plots.")
     parser.add_argument("--agents", nargs="*", default=None, help="Optional list of agent folder names to include.")
     parser.add_argument("--episode", type=int, default=None, help="Optional episode filter.")
@@ -1977,6 +2046,29 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Disable random +/- noise after blending.",
     )
+    parser.add_argument(
+        "--save-merged-data",
+        action="store_true",
+        help=(
+            "Save the post-blend DataFrames as loadable CSV files. "
+            "A later run can use --root <merged-data-root> --no-theoretic "
+            "to plot these values without adding/merging theoretical agents."
+        ),
+    )
+    parser.add_argument(
+        "--merged-data-root",
+        type=Path,
+        default=None,
+        help="Output root for --save-merged-data. Default: <plot-output>/merged_data",
+    )
+    parser.add_argument(
+        "--save-theoretic-data",
+        action="store_true",
+        help=(
+            "Also save *_Theoretic agents when --save-merged-data is used. "
+            "By default only non-theoretical agents are persisted."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1995,12 +2087,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Re-clean after adding theoretical data so numeric columns are consistent.
     data = clean_data(data, args.episode, args.experiment)
 
-    data = blend_substage_agents_with_theoretic(
-        data=data,
-        keep_theoretic=True,
-        noise_pct=0.0 if args.no_blend_noise else args.blend_noise_pct,
-        random_seed=args.blend_random_seed,
-    )
+
+
+
 
     ensure_output_dir(args.out)
     run_plots(

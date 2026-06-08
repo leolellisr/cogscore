@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark",
         action="append",
-        choices=["motivation", "attention_posner"],
+        choices=["motivation", "attention_posner", "sensory_buffer"],
         help=(
             "Benchmark to replot. Can be passed multiple times. "
             "If omitted, both motivation and attention_posner are used."
@@ -82,13 +82,14 @@ def main() -> int:
     ensure_storage_dirs()
     init_db()
 
-    benchmarks = args.benchmark or ["motivation", "attention_posner"]
+    benchmarks = args.benchmark or ["motivation", "attention_posner", "sensory_buffer"]
 
     created = []
 
     for benchmark in benchmarks:
         job_id = create_replot_job_for_benchmark(benchmark)
-
+        print("Created replot for:")
+        print(benchmark)
         if job_id is not None:
             created.append(job_id)
 
