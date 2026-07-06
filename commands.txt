@@ -13,6 +13,12 @@ source .venv/bin/activate
 cd playground/services/web
 streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 
+streamlit run app.py \
+  --server.address 0.0.0.0 \
+  --server.port 8501 \
+  --server.maxUploadSize 2048 \
+  --server.maxMessageSize 2048
+  
 
 Terminal 3
 
@@ -26,7 +32,7 @@ python -m worker.main
 
 rm -rf data/plots/motivation
 rm -rf data/plots/attention_posner
-
+rm -rf data/plots/sensory_buffer
 
 ## Upload results to bundle
 
@@ -44,7 +50,7 @@ python3 tools/create_result_bundle.py \
   
   ## Enviar results
   
-  curl -F "file=@data/uploads/real_results/sensory/Substage1_QL_Noise_sensory.zip" \
+  curl -F "file=@data/uploads/real_results/sensory/Substage3_DQN_sensory.zip" \
   http://localhost:8000/uploads/results
   
   
@@ -55,6 +61,7 @@ source .venv/bin/activate
 
 python3 playground/tools/create_comparison_replot_jobs.py --benchmark motivation
 python3 playground/tools/create_comparison_replot_jobs.py --benchmark attention_posner
+python3 playground/tools/create_comparison_replot_jobs.py --benchmark sensory_buffer
 
 
 

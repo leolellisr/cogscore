@@ -40,6 +40,7 @@ BENCHMARK_TO_SCRIPT = {
     "motivation": SCRIPTS_DIR / "mot.py",
     "attention_posner": SCRIPTS_DIR / "posner.py",
     "sensory_buffer": SCRIPTS_DIR / "sperling.py",
+    "learning": SCRIPTS_DIR / "learning.py",
 }
 
 

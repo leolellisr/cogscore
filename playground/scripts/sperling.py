@@ -28,6 +28,14 @@ EXPERIMENT_X_MIN = 0.0
 EXPERIMENT_X_MAX = 10000.0
 EXPERIMENT_X_STEP = 1000
 
+# Mesmo padrão dos scripts Posner/MOT:
+# 1) força cada curva a ter um número fixo de pontos;
+# 2) infere pontos intermediários;
+# 3) suaviza sem reduzir o número de pontos.
+DEFAULT_X_POINTS = 50
+DEFAULT_SMOOTH_WINDOW = 7
+DEFAULT_IMPUTE_LOOKBACK = 5
+
 
 def parse_bool(value) -> bool:
     if pd.isna(value):
@@ -323,7 +331,22 @@ def extract_xy_from_cue_desc(cue_desc: str) -> tuple[float, float]:
     return (np.nan, np.nan)
 
 
-def make_delay_grid(x_min: float = EXPERIMENT_X_MIN, x_max: float = EXPERIMENT_X_MAX, step_ms: int = EXPERIMENT_X_STEP) -> np.ndarray:
+def make_delay_grid(
+    x_min: float = EXPERIMENT_X_MIN,
+    x_max: float = EXPERIMENT_X_MAX,
+    step_ms: int = EXPERIMENT_X_STEP,
+    x_points: Optional[int] = None,
+) -> np.ndarray:
+    """
+    Cria o eixo de delay usado nos plots.
+
+    Quando x_points e informado, usa um grid denso com quantidade fixa
+    de pontos, equivalente ao comportamento dos scripts Posner/MOT.
+    Quando x_points nao e informado, preserva o grid discreto original.
+    """
+    if x_points is not None and int(x_points) > 1:
+        return np.linspace(float(x_min), float(x_max), int(x_points), dtype=float)
+
     return np.arange(x_min, x_max + step_ms, step_ms, dtype=float)
 
 
@@ -419,6 +442,111 @@ def linear_interp_extrap(
     return y_new
 
 
+def previous_mean_fallback(series: pd.Series, lookback: int) -> pd.Series:
+    """
+    Preenche valores ausentes usando a media dos ultimos pontos validos.
+    Espelha o fallback usado nos scripts Posner/MOT.
+    """
+    out = pd.to_numeric(series, errors="coerce").copy()
+    history: list[float] = []
+
+    for idx in out.index:
+        val = out.loc[idx]
+
+        if pd.isna(val):
+            if history:
+                out.loc[idx] = float(np.mean(history[-lookback:]))
+        else:
+            history.append(float(val))
+
+    return out.bfill().ffill()
+
+
+def smooth_values(values: pd.Series, window: int) -> pd.Series:
+    """
+    Suavizacao em duas passagens, mantendo o mesmo numero de pontos.
+    Esta e a mesma logica usada em Posner/MOT.
+    """
+    y = pd.to_numeric(values, errors="coerce")
+
+    if window is None or window <= 1 or len(y) <= 2:
+        return y
+
+    window = int(window)
+
+    if window % 2 == 0:
+        window += 1
+
+    first = y.rolling(window=window, center=True, min_periods=1).mean()
+
+    second_window = max(3, window // 2)
+
+    if second_window % 2 == 0:
+        second_window += 1
+
+    return first.rolling(window=second_window, center=True, min_periods=1).mean()
+
+
+def infer_delay_curve_values(
+    x: np.ndarray,
+    y: np.ndarray,
+    x_grid: np.ndarray,
+    smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+    impute_zeros: bool = True,
+    impute_lookback: int = DEFAULT_IMPUTE_LOOKBACK,
+    clip_range: Optional[tuple[float, float]] = None,
+    interp_noise_std: float = 0.0,
+    extrap_noise_std: float = 0.0,
+    random_state: int | np.random.Generator | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Completa e suaviza uma curva de delay.
+
+    Fluxo equivalente ao complete_metric de Posner/MOT:
+      1) opcionalmente ignora zeros como valores faltantes;
+      2) infere o grid completo por interpolacao/extrapolacao;
+      3) aplica fallback por media anterior para qualquer NaN residual;
+      4) suaviza a curva sem reduzir a quantidade de pontos.
+
+    Retorna (valores_inferidos, valores_suavizados).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    x_grid = np.asarray(x_grid, dtype=float)
+
+    valid = np.isfinite(x) & np.isfinite(y)
+    if impute_zeros:
+        valid = valid & (y != 0.0)
+
+    x_valid = x[valid]
+    y_valid = y[valid]
+
+    if len(x_valid) == 0:
+        empty = np.full(len(x_grid), np.nan, dtype=float)
+        return empty, empty
+
+    y_inferred = linear_interp_extrap(
+        x_valid,
+        y_valid,
+        x_grid,
+        interp_noise_std=interp_noise_std,
+        extrap_noise_std=extrap_noise_std,
+        random_state=random_state,
+    )
+
+    inferred_series = previous_mean_fallback(
+        pd.Series(y_inferred, index=pd.Index(range(len(y_inferred)))),
+        impute_lookback,
+    )
+    smooth_series = smooth_values(inferred_series, smooth_window)
+
+    if clip_range is not None:
+        inferred_series = inferred_series.clip(*clip_range)
+        smooth_series = smooth_series.clip(*clip_range)
+
+    return inferred_series.to_numpy(dtype=float), smooth_series.to_numpy(dtype=float)
+
+
 def nearest_values_for_grid(
     obs_x: np.ndarray,
     obs_values: np.ndarray,
@@ -470,6 +598,10 @@ def build_curve_dataframe(
     interp_noise_std: float = 0.0,
     extrap_noise_std: float = 0.0,
     random_state: int | np.random.Generator | None = None,
+    smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+    impute_zeros: bool = True,
+    impute_lookback: int = DEFAULT_IMPUTE_LOOKBACK,
+    clip_range: Optional[tuple[float, float]] = None,
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
 
@@ -481,10 +613,14 @@ def build_curve_dataframe(
         n = sub["n"].to_numpy(dtype=float)
         ci = sub["ci95"].to_numpy(dtype=float)
 
-        y_curve = linear_interp_extrap(
+        y_inferred, y_curve = infer_delay_curve_values(
             x,
             y,
             x_grid,
+            smooth_window=smooth_window,
+            impute_zeros=impute_zeros,
+            impute_lookback=impute_lookback,
+            clip_range=clip_range,
             interp_noise_std=interp_noise_std,
             extrap_noise_std=extrap_noise_std,
             random_state=random_state,
@@ -498,6 +634,7 @@ def build_curve_dataframe(
                     "agent": agent,
                     "delay_ms": x_grid,
                     "curve_value": y_curve,
+                    "inferred_value": y_inferred,
                     "n_label": n_curve,
                     "ci_label": ci_curve,
                 }
@@ -505,7 +642,7 @@ def build_curve_dataframe(
         )
 
     if not frames:
-        return pd.DataFrame(columns=["agent", "delay_ms", "curve_value", "n_label", "ci_label"])
+        return pd.DataFrame(columns=["agent", "delay_ms", "curve_value", "inferred_value", "n_label", "ci_label"])
 
     return pd.concat(frames, ignore_index=True)
 
@@ -518,12 +655,16 @@ def plot_fidelity_line(
     interp_noise_std: float = 0.0,
     extrap_noise_std: float = 0.0,
     random_state: int | np.random.Generator | None = None,
+    x_points: int = DEFAULT_X_POINTS,
+    smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+    impute_zeros: bool = True,
+    impute_lookback: int = DEFAULT_IMPUTE_LOOKBACK,
 ) -> bool:
     if stats.empty or stats["mean"].dropna().empty:
         print("[warn] skipped fidelity plot: no valid fidelity statistics")
         return False
 
-    x_grid = make_delay_grid(EXPERIMENT_X_MIN, EXPERIMENT_X_MAX, EXPERIMENT_X_STEP)
+    x_grid = make_delay_grid(EXPERIMENT_X_MIN, EXPERIMENT_X_MAX, EXPERIMENT_X_STEP, x_points=x_points)
     curve_df = build_curve_dataframe(
         stats,
         x_grid,
@@ -531,6 +672,10 @@ def plot_fidelity_line(
         interp_noise_std=interp_noise_std,
         extrap_noise_std=extrap_noise_std,
         random_state=random_state,
+        smooth_window=smooth_window,
+        impute_zeros=impute_zeros,
+        impute_lookback=impute_lookback,
+        clip_range=(0.0, 1.0),
     )
 
     if curve_df.empty:
@@ -659,6 +804,10 @@ def plot_mse_line(
     interp_noise_std: float = 0.0,
     extrap_noise_std: float = 0.0,
     random_state: int | np.random.Generator | None = None,
+    x_points: int = DEFAULT_X_POINTS,
+    smooth_window: int = DEFAULT_SMOOTH_WINDOW,
+    impute_zeros: bool = True,
+    impute_lookback: int = DEFAULT_IMPUTE_LOOKBACK,
 ) -> bool:
     if stats.empty or stats["mean"].dropna().empty:
         print("[warn] skipped MSE plot: no valid MSE statistics")
@@ -669,7 +818,7 @@ def plot_mse_line(
         print("[warn] skipped MSE plot: no positive MSE means for log scale")
         return False
 
-    x_grid = make_delay_grid(EXPERIMENT_X_MIN, EXPERIMENT_X_MAX, EXPERIMENT_X_STEP)
+    x_grid = make_delay_grid(EXPERIMENT_X_MIN, EXPERIMENT_X_MAX, EXPERIMENT_X_STEP, x_points=x_points)
     curve_df = build_curve_dataframe(
         positive,
         x_grid,
@@ -677,6 +826,10 @@ def plot_mse_line(
         interp_noise_std=interp_noise_std,
         extrap_noise_std=extrap_noise_std,
         random_state=random_state,
+        smooth_window=smooth_window,
+        impute_zeros=impute_zeros,
+        impute_lookback=impute_lookback,
+        clip_range=(1e-12, None),
     )
 
     if curve_df.empty:
@@ -973,6 +1126,45 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--x-points",
+        type=int,
+        default=DEFAULT_X_POINTS,
+        help=(
+            "Number of inferred delay points per curve. "
+            f"Default: {DEFAULT_X_POINTS}."
+        ),
+    )
+
+    parser.add_argument(
+        "--smooth-window",
+        type=int,
+        default=DEFAULT_SMOOTH_WINDOW,
+        help=(
+            "Smoothing window applied after inference. "
+            f"Default: {DEFAULT_SMOOTH_WINDOW}."
+        ),
+    )
+
+    parser.add_argument(
+        "--impute-lookback",
+        type=int,
+        default=DEFAULT_IMPUTE_LOOKBACK,
+        help=(
+            "Number of previous inferred points used by fallback imputation. "
+            f"Default: {DEFAULT_IMPUTE_LOOKBACK}."
+        ),
+    )
+
+    parser.add_argument(
+        "--no-impute-zeros",
+        action="store_true",
+        help=(
+            "Do not treat zero values as missing during curve inference. "
+            "By default, zeros are masked before interpolation, as in Posner/MOT."
+        ),
+    )
+
+    parser.add_argument(
         "--no-theoretic",
         action="store_true",
         help=(
@@ -999,12 +1191,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     root = args.root
     out = args.out
     benchmark_dir_name = args.benchmark_dir_name
+    x_points = max(2, int(args.x_points))
+    smooth_window = max(1, int(args.smooth_window))
+    impute_lookback = max(1, int(args.impute_lookback))
+    impute_zeros = not args.no_impute_zeros
 
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"[info] input root:          {root}")
     print(f"[info] benchmark dir name:  {benchmark_dir_name}")
     print(f"[info] output dir:          {out}")
+    print(f"[info] inferred x-points:   {x_points}")
+    print(f"[info] smooth window:       {smooth_window}")
+    print(f"[info] impute lookback:     {impute_lookback}")
+    print(f"[info] impute zeros:        {impute_zeros}")
 
     per_trial = load_per_trial(
         root=root,
@@ -1067,6 +1267,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         interp_noise_std=0.01,
         extrap_noise_std=0.03,
         random_state=42,
+        x_points=x_points,
+        smooth_window=smooth_window,
+        impute_zeros=impute_zeros,
+        impute_lookback=impute_lookback,
     )
 
     plot_mse_line(
@@ -1075,6 +1279,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         interp_noise_std=0.1,
         extrap_noise_std=0.5,
         random_state=42,
+        x_points=x_points,
+        smooth_window=smooth_window,
+        impute_zeros=impute_zeros,
+        impute_lookback=impute_lookback,
     )
 
     plot_fidelity_line(
@@ -1084,6 +1292,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         interp_noise_std=0.01,
         extrap_noise_std=0.03,
         random_state=42,
+        x_points=x_points,
+        smooth_window=smooth_window,
+        impute_zeros=impute_zeros,
+        impute_lookback=impute_lookback,
     )
 
     plot_fidelity_boxplot(
@@ -1103,3 +1315,4 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

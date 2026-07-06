@@ -45,6 +45,19 @@ MOTIVATION_RECOMMENDED_FILES = [
     "motivation_marta_trials.txt",
 ]
 
+LEARNING_PATTERNS = [
+    "nrewards.txt",
+    "epochs.csv",
+    "Substage1",
+    "Substage2",
+    "Substage3",
+    "Substage4",
+    "Substage5",
+    "profile",
+    "data",
+    "learner_cod",
+    "reward_cod",
+]
 
 @dataclass
 class BundleValidationResult:
@@ -109,6 +122,13 @@ def count_matching_files(folder: Path, patterns: list[str]) -> dict[str, int]:
 
     return counts
 
+def count_matching_files_recursive(folder: Path, patterns: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+
+    for pattern in patterns:
+        counts[pattern] = len(list(folder.rglob(pattern)))
+
+    return counts
 
 def validate_benchmark_out(root: Path, manifest: dict[str, Any]) -> tuple[list[str], list[str], dict[str, int]]:
     errors: list[str] = []
@@ -122,7 +142,23 @@ def validate_benchmark_out(root: Path, manifest: dict[str, Any]) -> tuple[list[s
     if not benchmark_out.is_dir():
         return ["benchmark_out exists but is not a directory"], warnings, {}
 
-    counts = count_matching_files(benchmark_out, COMMON_CSV_PATTERNS)
+    benchmark = manifest.get("benchmark")
+
+    if benchmark == "learning":
+        counts = count_matching_files_recursive(benchmark_out, LEARNING_PATTERNS)
+        total_learning_files = sum(counts.values())
+
+        if total_learning_files == 0:
+            errors.append(
+                "benchmark_out/ for learning must contain at least one recognized "
+                "learning file or directory, such as nrewards.txt, epochs.csv, "
+                "profile/, data/, learner_cod, reward_cod, Substage1/, "
+                "Substage2/, Substage3/, Substage4/, or Substage5/."
+            )
+
+        return errors, warnings, counts
+
+    counts = count_matching_files_recursive(benchmark_out, COMMON_CSV_PATTERNS)
     total_csvs = sum(counts.values())
 
     if total_csvs == 0:
@@ -130,8 +166,6 @@ def validate_benchmark_out(root: Path, manifest: dict[str, Any]) -> tuple[list[s
             "benchmark_out/ must contain at least one recognized CSV file: "
             + ", ".join(COMMON_CSV_PATTERNS)
         )
-
-    benchmark = manifest.get("benchmark")
 
     if benchmark == "motivation":
         for filename in MOTIVATION_RECOMMENDED_FILES:
