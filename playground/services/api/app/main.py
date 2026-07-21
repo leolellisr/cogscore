@@ -30,6 +30,7 @@ from .database import (
     list_architectures,
     list_experiment_runs,
     list_jobs,
+    list_runs,
     utc_now_iso,
 )
 from .schemas import (
@@ -37,6 +38,8 @@ from .schemas import (
     ExperimentRunResponse,
     HealthResponse,
     JobResponse,
+    ReplotRequest,
+    ReplotResponse,
     RunExperimentRequest,
     RunExperimentResponse,
     UploadArchitectureResponse,
@@ -338,6 +341,72 @@ async def upload_results(file: UploadFile = File(...)) -> dict[str, Any]:
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+
+@app.post("/plots/rebuild", response_model=ReplotResponse)
+def rebuild_comparison_plots(request: ReplotRequest) -> ReplotResponse:
+    """Create fresh comparison plots using every previously uploaded agent."""
+    supported = [
+        "sensory_buffer",
+        "attention_posner",
+        "motivation",
+        "learning",
+    ]
+
+    available = {
+        str(run.get("benchmark"))
+        for run in list_runs()
+        if str(run.get("benchmark")) in supported
+    }
+
+    if request.benchmark == "all":
+        benchmarks = [item for item in supported if item in available]
+    else:
+        benchmarks = [request.benchmark] if request.benchmark in available else []
+
+    if not benchmarks:
+        selected = "qualquer benchmark" if request.benchmark == "all" else request.benchmark
+        raise HTTPException(
+            status_code=404,
+            detail=f"Nenhum resultado importado encontrado para {selected}.",
+        )
+
+    created: list[dict[str, str]] = []
+
+    for benchmark in benchmarks:
+        benchmark_runs = list_runs(benchmark=benchmark, limit=1)
+        reference_run_id = (
+            str(benchmark_runs[0]["id"])
+            if benchmark_runs
+            else ""
+        )
+        job_id = "job_" + uuid.uuid4().hex[:12]
+
+        create_job(
+            job_id=job_id,
+            job_type="replot",
+            input_data={
+                "run_id": reference_run_id,
+                "benchmark": benchmark,
+                "mode": "comparison_all_uploaded_agents",
+                "trigger": "plots_refazer_button",
+            },
+        )
+
+        created.append({
+            "benchmark": benchmark,
+            "job_id": job_id,
+        })
+
+    return ReplotResponse(
+        ok=True,
+        message=(
+            "Novos jobs de comparação foram criados. "
+            "Cada job gera uma nova pasta de plots sem apagar as anteriores."
+        ),
+        jobs=created,
+    )
 
 @app.get("/plots")
 def list_plots() -> list[dict[str, Any]]:

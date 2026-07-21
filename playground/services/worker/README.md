@@ -1,38 +1,38 @@
-# Worker service
-
-background job processor.
-
-Responsibilities:
-
-- Run plotting scripts.
-- Process uploaded results.
-- Run experiments.
-- Save logs.
-- Generate downloadable artifacts.
-
-
 # CogScore Playground Worker
 
-Background worker for processing pending jobs.
+The worker continuously processes pending SQLite jobs. It validates uploaded
+architectures, starts experiment containers, imports results, and generates plots.
 
-Current job types:
+## Docker startup cleanup
 
-```text
-replot
-The worker reads pending jobs from the SQLite database, runs the appropriate plotting script, saves logs, and updates the job status.
-Run once
-From the project root:
+At every worker startup, stale dynamic containers are removed when they match one
+of these selectors:
+
+- label `cogscore.managed=true`;
+- name `cogscore-run-*`;
+- name `cogscore-smoke-*`.
+
+The retry behavior is controlled by `DOCKER_CLEANUP_ATTEMPTS` and
+`DOCKER_CLEANUP_RETRY_SECONDS`. Active architecture containers are also removed
+on normal `SIGTERM` / `SIGINT` shutdown.
+
+## Running
+
+With Compose:
+
+```bash
+cd playground
+docker compose up -d --build
+docker compose logs -f worker
+```
+
+Without Compose:
+
+```bash
 source .venv/bin/activate
-cd services/worker
-python -m worker.main --once
-Run continuously
-source .venv/bin/activate
-cd services/worker
+cd playground/services/worker
 python -m worker.main
-Logs
-Job logs are stored in:
-data/jobs/{job_id}/
-Plots
-Generated plots are stored in:
-data/plots/{benchmark}/{agent_name}/{job_id}/
+```
 
+Job logs are stored in `data/jobs/{job_id}/`. Comparison plots are stored in
+`data/plots/{benchmark}/comparison/{job_id}/`.

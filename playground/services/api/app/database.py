@@ -24,8 +24,6 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return None
     return dict(row)
 
-from typing import Any
-
 
 def list_runs(
     benchmark: str | None = None,
@@ -343,6 +341,68 @@ def mark_job_error(
             ),
         )
         conn.commit()
+
+
+def mark_interrupted_jobs_error(
+    error_message: str = "Worker restarted before the job finished.",
+) -> list[str]:
+    """Close jobs left as running by a stopped or killed worker process."""
+    now = utc_now_iso()
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, job_type, input_json FROM jobs WHERE status = 'running'"
+        ).fetchall()
+
+        interrupted_ids = [str(row["id"]) for row in rows]
+        if not interrupted_ids:
+            return []
+
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'error',
+                finished_at = ?,
+                error_message = ?,
+                output_json = ?
+            WHERE status = 'running'
+            """,
+            (
+                now,
+                error_message,
+                json.dumps({"error": error_message}, ensure_ascii=False),
+            ),
+        )
+
+        experiment_run_ids: set[str] = set()
+        for row in rows:
+            if not str(row["job_type"]).startswith("run_"):
+                continue
+            try:
+                input_data = json.loads(str(row["input_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            run_id = input_data.get("run_id") if isinstance(input_data, dict) else None
+            if run_id:
+                experiment_run_ids.add(str(run_id))
+
+        if experiment_run_ids:
+            placeholders = ",".join("?" for _ in experiment_run_ids)
+            conn.execute(
+                f"""
+                UPDATE experiment_runs
+                SET status = 'error',
+                    finished_at = ?,
+                    error_message = ?
+                WHERE id IN ({placeholders})
+                  AND status NOT IN ('done', 'error')
+                """,
+                (now, error_message, *sorted(experiment_run_ids)),
+            )
+
+        conn.commit()
+
+    return interrupted_ids
 
 
 def create_architecture(record: dict[str, Any]) -> dict[str, Any]:

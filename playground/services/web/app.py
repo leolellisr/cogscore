@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -16,6 +17,24 @@ st.set_page_config(
     page_icon="🧠",
     layout="wide",
 )
+
+
+def resolve_data_path(value: str | Path) -> Path:
+    """Map paths saved before the host/Docker switch to the mounted data root."""
+    original = Path(str(value)).expanduser()
+    if original.exists():
+        return original
+
+    data_root = Path(os.getenv("LOCAL_STORAGE_ROOT", "/data"))
+    parts = original.parts
+    for index in reversed(
+        [position for position, part in enumerate(parts) if part == "data"]
+    ):
+        candidate = data_root.joinpath(*parts[index + 1:])
+        if candidate.exists():
+            return candidate
+
+    return original
 
 
 def api_get(path: str) -> Any:
@@ -806,6 +825,20 @@ elif page == "Jobs":
             st.json(json.loads(job["output_json"]))
         else:
             st.info("No output yet.")
+
+        if job.get("error_message"):
+            st.subheader("Error")
+            st.error(str(job["error_message"]))
+
+        log_path = job.get("log_path")
+        if log_path:
+            resolved_log_path = resolve_data_path(str(log_path))
+            for log_name in ("stderr.log", "stdout.log"):
+                path = resolved_log_path / log_name
+                if path.exists():
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    st.subheader(log_name)
+                    st.code(text[-12000:] or "(empty log)", language="text")
     else:
         st.info("No jobs yet.")
 
@@ -837,8 +870,6 @@ elif page == "Experiment runs":
         st.info("No experiment runs yet.")
 
 elif page == "Plots":
-    from pathlib import Path
-
     st.title("Plots")
 
     plots_dir = Path(
@@ -847,11 +878,61 @@ elif page == "Plots":
 
     st.caption(f"Diretório: `{plots_dir}`")
 
-    if st.button("Atualizar plots"):
-        st.rerun()
+    st.subheader("Gerar uma nova comparação")
+    st.caption(
+        "Refazer cria uma nova geração de plots sem apagar as anteriores. "
+        "A comparação inclui o resultado válido mais recente de cada agente "
+        "já importado, incluindo agentes antigos e novos."
+    )
+
+    replot_options = {
+        "Todos os benchmarks com resultados": "all",
+        "Sensorial": "sensory_buffer",
+        "Atencional (Posner)": "attention_posner",
+        "Motivacional": "motivation",
+        "Aprendizagem": "learning",
+    }
+    replot_label = st.selectbox(
+        "Benchmark para refazer",
+        list(replot_options),
+        key="replot_benchmark",
+    )
+
+    action_col, refresh_col = st.columns([1, 1])
+
+    with action_col:
+        if st.button("Refazer", type="primary", use_container_width=True):
+            try:
+                result = api_post_json(
+                    "/plots/rebuild",
+                    {"benchmark": replot_options[replot_label]},
+                )
+                st.session_state["last_replot_result"] = result
+                st.success(result.get("message", "Jobs de plots criados."))
+            except Exception as exc:
+                st.error("Não foi possível criar os novos jobs de plots.")
+                st.exception(exc)
+
+    with refresh_col:
+        if st.button("Atualizar plots", use_container_width=True):
+            st.rerun()
+
+    last_replot = st.session_state.get("last_replot_result")
+    if last_replot:
+        jobs_created = last_replot.get("jobs", [])
+        if jobs_created:
+            st.markdown("**Últimos jobs criados**")
+            st.dataframe(
+                pd.DataFrame(jobs_created),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     if not plots_dir.exists():
-        st.error(f"Diretório de plots não encontrado: {plots_dir}")
+        st.info(
+            "O diretório de plots ainda não existe. Use Refazer depois de "
+            "importar pelo menos um bundle de resultados."
+        )
         st.stop()
 
     supported_extensions = {
@@ -863,7 +944,7 @@ elif page == "Plots":
         ".svg",
     }
 
-    plot_files = sorted(
+    all_plot_files = sorted(
         [
             path
             for path in plots_dir.rglob("*")
@@ -874,7 +955,7 @@ elif page == "Plots":
         reverse=True,
     )
 
-    html_files = sorted(
+    all_html_files = sorted(
         [
             path
             for path in plots_dir.rglob("*.html")
@@ -884,8 +965,30 @@ elif page == "Plots":
         reverse=True,
     )
 
+    available_benchmarks = sorted(
+        {
+            path.relative_to(plots_dir).parts[0]
+            for path in [*all_plot_files, *all_html_files]
+            if path.relative_to(plots_dir).parts
+        }
+    )
+    plot_filter = st.selectbox(
+        "Filtrar plots exibidos",
+        ["Todos", *available_benchmarks],
+        key="plot_benchmark_filter",
+    )
+
+    def matches_plot_filter(path: Path) -> bool:
+        if plot_filter == "Todos":
+            return True
+        relative = path.relative_to(plots_dir)
+        return bool(relative.parts) and relative.parts[0] == plot_filter
+
+    plot_files = [path for path in all_plot_files if matches_plot_filter(path)]
+    html_files = [path for path in all_html_files if matches_plot_filter(path)]
+
     if not plot_files and not html_files:
-        st.info("Nenhum plot encontrado em data/plots.")
+        st.info("Nenhum plot encontrado para o filtro selecionado.")
         st.stop()
 
     if plot_files:
@@ -947,6 +1050,7 @@ elif page == "Plots":
             height=800,
             scrolling=True,
         )
+
 
 elif page == "VNC":
     import streamlit.components.v1 as components

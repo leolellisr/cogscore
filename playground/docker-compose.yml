@@ -1,7 +1,10 @@
 services:
   api:
+    restart: unless-stopped
     build: ./services/api
     container_name: cogscore-api
+    init: true
+    stop_grace_period: 20s
     env_file:
       - .env
     environment:
@@ -12,12 +15,24 @@ services:
       - ./services/api/app:/app/app:ro
     ports:
       - "18000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 12
     networks:
       - cogscore_online_net
 
   worker:
+    restart: unless-stopped
     build: ./services/worker
     container_name: cogscore-worker
+    init: true
+    stop_grace_period: 30s
     env_file:
       - .env
     environment:
@@ -25,6 +40,9 @@ services:
       - API_DIR=/api_src
       - PROJECT_ROOT=/workspace
       - DATABASE_PATH=/data/db/playground.sqlite
+      - COGSCORE_DOCKER_NETWORK=${COGSCORE_DOCKER_NETWORK:-cogscore_online_net}
+      - PLOTS_DIR=/data/plots
+      - PLOT_TIMEOUT_SECONDS=${PLOT_TIMEOUT_SECONDS:-1800}
     volumes:
       - ./data:/data
       - ./services/api:/api_src:ro
@@ -33,41 +51,61 @@ services:
       - ./tools:/workspace/tools:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - api
-      - sim-vnc
+      api:
+        condition: service_healthy
+      sim-vnc:
+        condition: service_started
     networks:
       - cogscore_online_net
 
   web:
+    restart: unless-stopped
     build: ./services/web
     container_name: cogscore-web
+    init: true
+    stop_grace_period: 20s
     env_file:
       - .env
     environment:
-      - API_URL=http://host.docker.internal:18000
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - API_URL=http://api:8000
+      - PLOTS_DIR=/data/plots
+    command:
+      - streamlit
+      - run
+      - /app/app.py
+      - --server.address
+      - 0.0.0.0
+      - --server.port
+      - "8501"
+      - --server.maxUploadSize
+      - "2048"
+      - --server.maxMessageSize
+      - "2048"
     volumes:
       - ./data:/data:ro
       - ./services/web:/app:ro
     ports:
       - "8501:8501"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - cogscore_online_net
 
   sim-vnc:
+    restart: unless-stopped
     build: ./services/sim-vnc
     container_name: cogscore-sim-vnc
+    init: true
+    stop_grace_period: 30s
     env_file:
       - .env
     environment:
       - DISPLAY=:1
       - VNC_PASSWORD=${VNC_PASSWORD}
-      - API_URL=http://host.docker.internal:18000
-      - PLOTS_DIR=/data/plots      
-      - VNC_PUBLIC_URL=http://localhost:6080/vnc.html?autoconnect=true&resize=scale      
+      - API_URL=http://api:8000
+      - PLOTS_DIR=/data/plots
+      - VNC_PUBLIC_URL=http://localhost:6080/vnc.html?autoconnect=true&resize=scale
     shm_size: "2gb"
     volumes:
       - ./data:/data
@@ -81,8 +119,11 @@ services:
       - cogscore_online_net
 
   proxy:
+    restart: unless-stopped
     image: caddy:2
     container_name: cogscore-proxy
+    init: true
+    stop_grace_period: 20s
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
@@ -99,5 +140,5 @@ services:
 
 networks:
   cogscore_online_net:
-    name: cogscore_online_net
+    name: ${COGSCORE_DOCKER_NETWORK:-cogscore_online_net}
     driver: bridge

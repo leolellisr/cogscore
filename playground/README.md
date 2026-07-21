@@ -576,137 +576,86 @@ List jobs:
 curl http://localhost:8000/jobs
 
 
-## Comparison plots with all uploaded agents
-By default, each uploaded result bundle creates a replot job. The worker is configured to generate comparison plots using the latest uploaded run of each agent for the same benchmark.
+## Docker, automatic cleanup, and comparison plots
 
-For example, if the database contains:
-Substage1 / motivation
-Substage3 / motivation
-Substage1 / attention_posner
-Substage3 / attention_posner
+Create the local environment file once:
 
-then a comparison replot job for motivation will generate plots using both:
-Substage1
-Substage3
+```bash
+cd playground
+cp .env.example .env
+```
 
-and a comparison replot job for attention_posner will also generate plots using both agents.
-The generated comparison plots are stored in:
-data/plots/{benchmark}/comparison/{job_id}/
+Start the complete playground in the background:
 
-Examples:
-data/plots/motivation/comparison/{job_id}/
-data/plots/attention_posner/comparison/{job_id}/
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api web worker sim-vnc
+```
 
-## Create comparison replot jobs manually
-If you already uploaded several result bundles and want to regenerate comparison plots, run:
-cd ~/git/cogscore-playground
-source .venv/bin/activate
+The Compose services use `restart: unless-stopped`. Whenever the worker starts, it
+searches for dynamic architecture containers left by an earlier execution and
+removes containers labeled `cogscore.managed=true` or named `cogscore-run-*` /
+`cogscore-smoke-*`. Compose service containers such as `cogscore-api` and
+`cogscore-web` are not removed by that startup cleanup.
 
-python tools/create_comparison_replot_jobs.py --benchmark motivation
-python tools/create_comparison_replot_jobs.py --benchmark attention_posner
+For an explicit full stop and cleanup, use:
 
-Or create jobs for both supported benchmarks at once:
-python tools/create_comparison_replot_jobs.py
+```bash
+./scripts/docker_cleanup.sh
+```
 
-Then run the worker:
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/worker
-python -m worker.main --once
-python -m worker.main --once
+This removes the dynamic architecture containers first and then runs
+`docker compose down --remove-orphans`.
 
-Each --once processes one pending job. To keep the worker running continuously:
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/worker
-python -m worker.main
+### Rebuilding plots from the dashboard
 
-## Check which agents were included in a comparison plot
-After the worker runs, inspect the job output:
-sqlite3 data/db/playground.sqlite "select id, job_type, status, output_json from jobs order by created_at desc limit 5;"
+Every uploaded result bundle automatically creates a comparison replot job. To
+create another generation manually:
 
-You can also inspect the temporary plot input folder:
-tree data/jobs/*/plot_input -L 3
+1. Open the Streamlit dashboard.
+2. Go to **Plots**.
+3. Select one benchmark or all benchmarks.
+4. Click **Refazer**.
 
-A correct comparison job should look like:
-plot_input
-├── Substage1
-│   └── benchmark_out
-└── Substage3
-    └── benchmark_out
+Each new job:
 
-If only one agent appears, then only one valid run exists in the database for that benchmark.
+- keeps all previous plot generations;
+- includes every distinct imported agent for the selected benchmark;
+- uses the newest readable result for each agent;
+- falls back to an older valid result when the newest result directory is missing
+  or has no usable benchmark data;
+- remaps legacy host paths such as `/home/.../playground/data/...` to the
+  current Docker mount under `/data/...`;
+- writes its output to `data/plots/{benchmark}/comparison/{job_id}/`;
+- writes `generation.json` with the selected agents and run IDs.
 
-## Check imported runs by benchmark
+The same operation is available through the API:
 
-To see all imported runs:
-sqlite3 data/db/playground.sqlite "select agent_name, benchmark, run_name, created_at from runs order by benchmark, agent_name, created_at;"
+```bash
+curl -X POST http://localhost:18000/plots/rebuild \
+  -H 'Content-Type: application/json' \
+  -d '{"benchmark":"all"}'
+```
 
-Expected example:
-Substage1|attention_posner|Substage1 attentional results|...
-Substage3|attention_posner|Substage3 attentional results|...
-Substage1|motivation|Substage1 motivation results|...
-Substage3|motivation|Substage3 motivation results|...
+Valid benchmark values are `sensory_buffer`, `attention_posner`, `motivation`,
+`learning`, and `all`. Job logs are available in the **Jobs** page and under
+`data/jobs/{job_id}/stdout.log` and `stderr.log`.
 
-If an agent is missing for a benchmark, upload its result bundle again.
+### Checking which agents were plotted
 
-Check if a result was uploaded with the wrong benchmark
-Run:
-sqlite3 data/db/playground.sqlite "select agent_name, benchmark, benchmark_out_path from runs;"
-Check whether each result was imported with the correct benchmark:
-attention/Posner results -> attention_posner
-motivation results       -> motivation
+Inspect the generation metadata:
 
-If a result was uploaded with the wrong benchmark in manifest.yaml, create the bundle again with the correct --benchmark value and upload it again.
+```bash
+find data/plots -name generation.json -print
+cat data/plots/{benchmark}/comparison/{job_id}/generation.json
+```
 
-Clear old one-agent plots
-Old plots generated before comparison mode may still appear in the dashboard. To remove only the generated plots, run:
-rm -rf data/plots/motivation
-rm -rf data/plots/attention_posner
+Or inspect the temporary normalized input created for that job:
 
-This does not delete uploaded results, runs, jobs, or the database. It only removes generated plot files.
-After clearing plots, create new comparison jobs:
-python tools/create_comparison_replot_jobs.py
-
-Then run the worker:
-cd services/worker
-python -m worker.main
-
-## View plots in the dashboard
-
-Run the three services.
-
-### Terminal 1: API
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/api
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-### Terminal 2: Worker
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/worker
-python -m worker.main
-
-### Terminal 3: Web dashboard
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/web
-streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-
-Open:
-http://localhost:8501
-
-Then go to:
-Plots
-For comparison plots, select:
-Benchmark: motivation
-Agent: comparison
-
-or:
-Benchmark: attention_posner
-Agent: comparison
-
+```bash
+tree data/jobs/{job_id}/plot_input -L 4
+```
 
 # Troubleshooting comparison plots
 
@@ -742,11 +691,11 @@ cat data/jobs/{job_id}/stderr.log
 
 Replace {job_id} with the job ID shown in the database.
 
-## Problem: job is stuck as running
-Reset running jobs to pending:
-python tools/reset_jobs.py --status running --to pending
-Then rerun the worker:
-cd services/worker
-python -m worker.main --once
+## Problem: a job was interrupted by a restart
+
+At startup, the worker automatically marks jobs left in `running` state as
+`error` and records that the previous worker execution was interrupted. The
+corresponding dynamic architecture container is removed by the same startup
+cleanup. Create a new experiment or click **Refazer** again to start a fresh job.
 
 

@@ -248,12 +248,16 @@ def parse_args() -> argparse.Namespace:
 
 
     parser.add_argument(
+        "--seed",
         "--seeds",
         dest="seeds",
         type=int,
         action="append",
         required=True,
-        help="Random seed. Pode ser informado mais de uma vez.",
+        help=(
+            "Random seed. Use --seed once or repeat --seed/--seeds "
+            "to record multiple seeds."
+        ),
     )
 
     parser.add_argument(

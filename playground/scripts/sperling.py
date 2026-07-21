@@ -14,8 +14,12 @@ import pandas as pd
 from matplotlib.patches import Patch
 
 
-PER_TRIAL_RE = re.compile(r"vision_sperling_per_trial_episode_(\d+)_active\.csv$")
-SUMMARY_RE = re.compile(r"vision_sperling_summary_episode_(\d+)_active\.csv$")
+PER_TRIAL_RE = re.compile(
+    r"vision_sperling_per_trial_episode_(\d+)_(?:active|remote)\.csv$"
+)
+SUMMARY_RE = re.compile(
+    r"vision_sperling_summary_episode_(\d+)_(?:active|remote)\.csv$"
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -73,9 +77,9 @@ def discover_files(
     benchmark_dir_name: str = "benchmark_out",
 ) -> list[Path]:
     if kind == "per_trial":
-        filename_pattern = "vision_sperling_per_trial_episode_*_active.csv"
+        filename_pattern = "vision_sperling_per_trial_episode_*.csv"
     elif kind == "summary":
-        filename_pattern = "vision_sperling_summary_episode_*_active.csv"
+        filename_pattern = "vision_sperling_summary_episode_*.csv"
     else:
         raise ValueError(f"Unknown kind: {kind}")
 
@@ -103,7 +107,11 @@ def load_per_trial(
         episode_file = int(match.group(1))
         agent = path.parent.parent.name
 
-        df = read_csv_auto(path)
+        try:
+            df = read_csv_auto(path)
+        except Exception as exc:
+            print(f"[skip] unreadable per-trial file {path}: {exc}")
+            continue
 
         if df.empty:
             print(f"[skip] empty per-trial file: {path}")
@@ -169,7 +177,11 @@ def load_summary(
         episode_file = int(match.group(1))
         agent = path.parent.parent.name
 
-        df = read_csv_auto(path)
+        try:
+            df = read_csv_auto(path)
+        except Exception as exc:
+            print(f"[skip] unreadable summary file {path}: {exc}")
+            continue
 
         if df.empty:
             print(f"[skip] empty summary file: {path}")

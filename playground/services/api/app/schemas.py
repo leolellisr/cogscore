@@ -142,6 +142,21 @@ class RunExperimentResponse(BaseModel):
     message: str
 
 
+class ReplotRequest(BaseModel):
+    benchmark: BenchmarkName | Literal["all"] = "all"
+
+
+class ReplotJobResponse(BaseModel):
+    benchmark: BenchmarkName
+    job_id: str
+
+
+class ReplotResponse(BaseModel):
+    ok: bool
+    message: str
+    jobs: list[ReplotJobResponse]
+
+
 class ExperimentRunResponse(BaseModel):
     id: str
     architecture_id: str

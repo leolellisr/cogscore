@@ -152,6 +152,8 @@ def import_result_bundle(zip_path: Path, original_filename: str) -> dict[str, An
             "storage_path": str(destination_root),
             "benchmark_out_path": str(benchmark_out_path),
             "uploaded_zip_path": str(copied_zip_path),
+            "mode": "comparison_all_uploaded_agents",
+            "trigger": "result_upload",
         },
     )
 
