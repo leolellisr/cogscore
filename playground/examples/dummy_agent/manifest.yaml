@@ -1,0 +1,20 @@
+name: DummyAgent
+version: "0.1.0"
+author: "CogScore Example"
+interface: rest
+benchmarks:
+  - sensory_buffer
+  - attention_posner  
+  - motivation
+  - learning
+endpoints:
+  health: /health
+  reset: /reset
+  stimulus: /sensory/stimulus
+  retention_tick: /sensory/retention_tick
+  readout: /sensory/readout
+  close: /close
+  sensory_act: /sensory/act
+  attention_act: /attention/act  
+  motivation_act: /motivation/act
+  learning_act: /learning/act

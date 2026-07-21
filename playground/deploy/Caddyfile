@@ -1,0 +1,15 @@
+:80 {
+    encode gzip
+
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle_path /vnc/* {
+        reverse_proxy sim-vnc:6080
+    }
+
+    handle {
+        reverse_proxy web:8501
+    }
+}

@@ -1,22 +1,103 @@
 services:
-  # Etapa 5:
-  # api:
-  #   build: ./services/api
-  #
-  # worker:
-  #   build: ./services/worker
-  #
-  # web:
-  #   build: ./services/web
-  #
-  # postgres:
-  #   image: postgres:16
-  #
-  # sim-vnc:
-  #   build: ./services/sim-vnc
-  #
-  # proxy:
-  #   image: caddy:2
+  api:
+    build: ./services/api
+    container_name: cogscore-api
+    env_file:
+      - .env
+    environment:
+      - LOCAL_STORAGE_ROOT=/data
+      - DATABASE_PATH=/data/db/playground.sqlite
+    volumes:
+      - ./data:/data
+      - ./services/api/app:/app/app:ro
+    ports:
+      - "18000:8000"
+    networks:
+      - cogscore_online_net
 
-volumes:
-  # Future named volumes can be declared here.
+  worker:
+    build: ./services/worker
+    container_name: cogscore-worker
+    env_file:
+      - .env
+    environment:
+      - LOCAL_STORAGE_ROOT=/data
+      - API_DIR=/api_src
+      - PROJECT_ROOT=/workspace
+      - DATABASE_PATH=/data/db/playground.sqlite
+    volumes:
+      - ./data:/data
+      - ./services/api:/api_src:ro
+      - ./services/worker:/worker_src:ro
+      - ./scripts:/workspace/scripts:ro
+      - ./tools:/workspace/tools:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - api
+      - sim-vnc
+    networks:
+      - cogscore_online_net
+
+  web:
+    build: ./services/web
+    container_name: cogscore-web
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://host.docker.internal:18000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/data:ro
+      - ./services/web:/app:ro
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    networks:
+      - cogscore_online_net
+
+  sim-vnc:
+    build: ./services/sim-vnc
+    container_name: cogscore-sim-vnc
+    env_file:
+      - .env
+    environment:
+      - DISPLAY=:1
+      - VNC_PASSWORD=${VNC_PASSWORD}
+      - API_URL=http://host.docker.internal:18000
+      - PLOTS_DIR=/data/plots      
+      - VNC_PUBLIC_URL=http://localhost:6080/vnc.html?autoconnect=true&resize=scale      
+    shm_size: "2gb"
+    volumes:
+      - ./data:/data
+      - ./scenes:/workspace/scenes:ro
+      - ./scripts:/workspace/scripts:ro
+      - ../cogscore:/workspace/cogscore:ro
+    ports:
+      - "6080:6080"
+      - "5901:5901"
+    networks:
+      - cogscore_online_net
+
+  proxy:
+    image: caddy:2
+    container_name: cogscore-proxy
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./data/caddy_config:/config
+    ports:
+      - "8080:80"
+      - "8443:443"
+    depends_on:
+      - api
+      - web
+      - sim-vnc
+    networks:
+      - cogscore_online_net
+
+networks:
+  cogscore_online_net:
+    name: cogscore_online_net
+    driver: bridge

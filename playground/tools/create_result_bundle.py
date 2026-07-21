@@ -38,7 +38,8 @@ def zip_directory(source_dir: Path, output_zip: Path) -> None:
 
 def create_manifest(args: argparse.Namespace) -> dict[str, Any]:
     parameters: dict[str, Any] = {
-        "seed": args.seed,
+        "seed": args.seeds[0],
+        "seeds": args.seeds,
         "x_points": args.x_points,
         "smooth_window": args.smooth_window,
     }
@@ -101,7 +102,59 @@ def create_bundle(args: argparse.Namespace) -> Path:
             )
 
         destination_benchmark_out = bundle_root / "benchmark_out"
-        shutil.copytree(benchmark_out, destination_benchmark_out)
+
+        if args.benchmark == "learning":
+            # Learning comparisons require the hierarchy:
+            # benchmark_out / AGENT / EXPERIMENT / ... / nrewards.txt
+            #
+            # The supplied --benchmark-out directory normally contains the
+            # experiment folders directly (for example Te1/ and Te2/).  Place
+            # those folders below the agent name without changing the bundle
+            # format used by the other benchmarks.
+            nrewards_files = sorted(benchmark_out.rglob("nrewards.txt"))
+
+            if not nrewards_files:
+                raise ValueError(
+                    "Learning benchmark_out does not contain any nrewards.txt files: "
+                    f"{benchmark_out}"
+                )
+
+            experiment_names = sorted(
+                {
+                    path.relative_to(benchmark_out).parts[0]
+                    for path in nrewards_files
+                    if len(path.relative_to(benchmark_out).parts) >= 2
+                }
+            )
+
+            if not experiment_names:
+                raise ValueError(
+                    "Could not infer learning experiment folders. Expected paths like "
+                    "EXPERIMENT/seed/profile/nrewards.txt inside --benchmark-out."
+                )
+
+            agent_dir = destination_benchmark_out / safe_slug(args.agent_name)
+            shutil.copytree(benchmark_out, agent_dir)
+
+            manifest["result_layout"] = "benchmark_out/AGENT/EXPERIMENT"
+            manifest["experiments"] = experiment_names
+
+            # Rewrite the manifest after adding learning-specific metadata.
+            with manifest_path.open("w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    manifest,
+                    f,
+                    sort_keys=False,
+                    allow_unicode=True,
+                )
+
+            print(
+                "[INFO] Learning bundle layout: "
+                f"benchmark_out/{safe_slug(args.agent_name)}/<experiment>/..."
+            )
+            print(f"[INFO] Learning experiments: {', '.join(experiment_names)}")
+        else:
+            shutil.copytree(benchmark_out, destination_benchmark_out)
 
         optional_dir = bundle_root / "optional"
         optional_dir.mkdir(exist_ok=True)
@@ -193,11 +246,14 @@ def parse_args() -> argparse.Namespace:
         help="Number of trials per experiment.",
     )
 
+
     parser.add_argument(
-        "--seed",
+        "--seeds",
+        dest="seeds",
         type=int,
-        default=777,
-        help="Random seed.",
+        action="append",
+        required=True,
+        help="Random seed. Pode ser informado mais de uma vez.",
     )
 
     parser.add_argument(

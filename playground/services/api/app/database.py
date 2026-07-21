@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from .config import DATABASE_PATH, ensure_storage_dirs
@@ -15,80 +14,60 @@ def utc_now_iso() -> str:
 
 def get_connection() -> sqlite3.Connection:
     ensure_storage_dirs()
-
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db() -> None:
-    ensure_storage_dirs()
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-                id TEXT PRIMARY KEY,
-                agent_name TEXT NOT NULL,
-                architecture_name TEXT NOT NULL,
-                benchmark TEXT NOT NULL,
-                benchmark_version TEXT NOT NULL,
-                cogscore_version TEXT NOT NULL,
-                run_name TEXT NOT NULL,
-                run_date TEXT NOT NULL,
-                seed INTEGER,
-                episodes INTEGER,
-                trials_per_experiment INTEGER,
-                status TEXT NOT NULL,
-                storage_path TEXT NOT NULL,
-                benchmark_out_path TEXT NOT NULL,
-                manifest_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS jobs (
-                id TEXT PRIMARY KEY,
-                job_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                input_json TEXT NOT NULL,
-                output_json TEXT,
-                log_path TEXT,
-                error_message TEXT,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT
-            )
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS plots (
-                id TEXT PRIMARY KEY,
-                run_id TEXT,
-                benchmark TEXT NOT NULL,
-                plot_type TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-
-        conn.commit()
-
-
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
-
     return dict(row)
 
+from typing import Any
 
-def create_run(run: dict[str, Any]) -> dict[str, Any]:
+
+def list_runs(
+    benchmark: str | None = None,
+    agent_name: str | None = None,
+    status: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT *
+        FROM runs
+    """
+
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if benchmark:
+        clauses.append("benchmark = ?")
+        params.append(benchmark)
+
+    if agent_name:
+        clauses.append("agent_name = ?")
+        params.append(agent_name)
+
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += " ORDER BY created_at DESC"
+
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    return [dict(row) for row in rows]
+
+def create_run(record: dict[str, Any]) -> dict[str, Any]:
     with get_connection() as conn:
         conn.execute(
             """
@@ -113,55 +92,108 @@ def create_run(run: dict[str, Any]) -> dict[str, Any]:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                run["id"],
-                run["agent_name"],
-                run["architecture_name"],
-                run["benchmark"],
-                run["benchmark_version"],
-                run["cogscore_version"],
-                run["run_name"],
-                run["run_date"],
-                run.get("seed"),
-                run.get("episodes"),
-                run.get("trials_per_experiment"),
-                run["status"],
-                run["storage_path"],
-                run["benchmark_out_path"],
-                json.dumps(run["manifest"], ensure_ascii=False),
-                run["created_at"],
+                record["id"],
+                record["agent_name"],
+                record["architecture_name"],
+                record["benchmark"],
+                record["benchmark_version"],
+                record["cogscore_version"],
+                record["run_name"],
+                record["run_date"],
+                record.get("seed"),
+                record.get("episodes"),
+                record.get("trials_per_experiment"),
+                record["status"],
+                record["storage_path"],
+                record["benchmark_out_path"],
+                json.dumps(record["manifest"], ensure_ascii=False),
+                record["created_at"],
             ),
         )
-
         conn.commit()
 
-    return run
+    return record
 
+def init_db() -> None:
+    ensure_storage_dirs()
 
-def list_runs() -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute(
+        conn.execute(
             """
-            SELECT *
-            FROM runs
-            ORDER BY created_at DESC
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                job_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                input_json TEXT NOT NULL,
+                output_json TEXT,
+                log_path TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            )
             """
-        ).fetchall()
+        )
 
-    return [dict(row) for row in rows]
-
-
-def get_run(run_id: str) -> dict[str, Any] | None:
-    with get_connection() as conn:
-        row = conn.execute(
+        conn.execute(
             """
-            SELECT *
-            FROM runs
-            WHERE id = ?
-            """,
-            (run_id,),
-        ).fetchone()
+            CREATE TABLE IF NOT EXISTS architectures (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                author TEXT,
+                interface_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                image_tag TEXT,
+                manifest_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                validated_at TEXT,
+                error_message TEXT
+            )
+            """
+        )
 
-    return row_to_dict(row)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS experiment_runs (
+                id TEXT PRIMARY KEY,
+                architecture_id TEXT NOT NULL,
+                benchmark TEXT NOT NULL,
+                scene TEXT NOT NULL,
+                status TEXT NOT NULL,
+                parameters_json TEXT NOT NULL,
+                result_path TEXT,
+                job_id TEXT,
+                created_at TEXT NOT NULL,
+                finished_at TEXT,
+                error_message TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+                id TEXT PRIMARY KEY,
+                agent_name TEXT NOT NULL,
+                architecture_name TEXT NOT NULL,
+                benchmark TEXT NOT NULL,
+                benchmark_version TEXT NOT NULL,
+                cogscore_version TEXT NOT NULL,
+                run_name TEXT NOT NULL,
+                run_date TEXT NOT NULL,
+                seed INTEGER,
+                episodes INTEGER,
+                trials_per_experiment INTEGER,
+                status TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                benchmark_out_path TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
 
 
 def create_job(
@@ -171,8 +203,6 @@ def create_job(
     input_data: dict[str, Any],
     status: str = "pending",
 ) -> dict[str, Any]:
-    created_at = utc_now_iso()
-
     job = {
         "id": job_id,
         "job_type": job_type,
@@ -181,7 +211,7 @@ def create_job(
         "output_json": None,
         "log_path": None,
         "error_message": None,
-        "created_at": created_at,
+        "created_at": utc_now_iso(),
         "started_at": None,
         "finished_at": None,
     }
@@ -190,16 +220,8 @@ def create_job(
         conn.execute(
             """
             INSERT INTO jobs (
-                id,
-                job_type,
-                status,
-                input_json,
-                output_json,
-                log_path,
-                error_message,
-                created_at,
-                started_at,
-                finished_at
+                id, job_type, status, input_json, output_json,
+                log_path, error_message, created_at, started_at, finished_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -216,109 +238,56 @@ def create_job(
                 job["finished_at"],
             ),
         )
-
         conn.commit()
 
     return job
 
 
+def get_job(job_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()
+    return row_to_dict(row)
+
+
 def list_jobs() -> list[dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
-            """
-            SELECT *
-            FROM jobs
-            ORDER BY created_at DESC
-            """
+            "SELECT * FROM jobs ORDER BY created_at DESC"
         ).fetchall()
-
     return [dict(row) for row in rows]
 
 
-def get_job(job_id: str) -> dict[str, Any] | None:
+def get_next_pending_job() -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(
             """
             SELECT *
             FROM jobs
-            WHERE id = ?
-            """,
-            (job_id,),
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+            """
         ).fetchone()
 
     return row_to_dict(row)
 
-def get_next_pending_job(job_type: str | None = None) -> dict[str, Any] | None:
-    with get_connection() as conn:
-        if job_type is None:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM jobs
-                WHERE status = 'pending'
-                ORDER BY created_at ASC
-                LIMIT 1
-                """
-            ).fetchone()
-        else:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM jobs
-                WHERE status = 'pending'
-                AND job_type = ?
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (job_type,),
-            ).fetchone()
 
-    return row_to_dict(row)
-
-
-def update_job_status(
-    *,
-    job_id: str,
-    status: str,
-    output_data: dict[str, Any] | None = None,
-    log_path: str | None = None,
-    error_message: str | None = None,
-    started_at: str | None = None,
-    finished_at: str | None = None,
-) -> None:
+def mark_job_running(*, job_id: str, log_path: str | None = None) -> None:
     with get_connection() as conn:
         conn.execute(
             """
             UPDATE jobs
-            SET status = ?,
-                output_json = COALESCE(?, output_json),
-                log_path = COALESCE(?, log_path),
-                error_message = ?,
-                started_at = COALESCE(?, started_at),
-                finished_at = COALESCE(?, finished_at)
+            SET status = 'running',
+                started_at = ?,
+                log_path = ?
             WHERE id = ?
             """,
-            (
-                status,
-                json.dumps(output_data, ensure_ascii=False) if output_data is not None else None,
-                log_path,
-                error_message,
-                started_at,
-                finished_at,
-                job_id,
-            ),
+            (utc_now_iso(), log_path, job_id),
         )
-
         conn.commit()
-
-
-def mark_job_running(job_id: str, log_path: str | None = None) -> None:
-    update_job_status(
-        job_id=job_id,
-        status="running",
-        log_path=log_path,
-        started_at=utc_now_iso(),
-    )
 
 
 def mark_job_done(
@@ -327,14 +296,24 @@ def mark_job_done(
     output_data: dict[str, Any] | None = None,
     log_path: str | None = None,
 ) -> None:
-    update_job_status(
-        job_id=job_id,
-        status="done",
-        output_data=output_data,
-        log_path=log_path,
-        error_message=None,
-        finished_at=utc_now_iso(),
-    )
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'done',
+                finished_at = ?,
+                output_json = ?,
+                log_path = ?
+            WHERE id = ?
+            """,
+            (
+                utc_now_iso(),
+                json.dumps(output_data or {}, ensure_ascii=False),
+                log_path,
+                job_id,
+            ),
+        )
+        conn.commit()
 
 
 def mark_job_error(
@@ -344,33 +323,157 @@ def mark_job_error(
     output_data: dict[str, Any] | None = None,
     log_path: str | None = None,
 ) -> None:
-    update_job_status(
-        job_id=job_id,
-        status="error",
-        output_data=output_data,
-        log_path=log_path,
-        error_message=error_message,
-        finished_at=utc_now_iso(),
-    )
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'error',
+                finished_at = ?,
+                error_message = ?,
+                output_json = ?,
+                log_path = ?
+            WHERE id = ?
+            """,
+            (
+                utc_now_iso(),
+                error_message,
+                json.dumps(output_data or {}, ensure_ascii=False),
+                log_path,
+                job_id,
+            ),
+        )
+        conn.commit()
 
 
-def list_plot_files() -> list[dict[str, Any]]:
-    from .config import PLOTS_DIR
-
-    if not PLOTS_DIR.exists():
-        return []
-
-    files: list[dict[str, Any]] = []
-
-    for path in sorted(PLOTS_DIR.rglob("*")):
-        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf", ".svg"}:
-            files.append(
-                {
-                    "name": path.name,
-                    "path": str(path),
-                    "relative_path": str(path.relative_to(PLOTS_DIR)),
-                    "size_bytes": path.stat().st_size,
-                }
+def create_architecture(record: dict[str, Any]) -> dict[str, Any]:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO architectures (
+                id, name, version, author, interface_type, status,
+                storage_path, image_tag, manifest_json, created_at,
+                validated_at, error_message
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["id"],
+                record["name"],
+                record["version"],
+                record.get("author"),
+                record["interface_type"],
+                record["status"],
+                record["storage_path"],
+                record.get("image_tag"),
+                json.dumps(record["manifest"], ensure_ascii=False),
+                record["created_at"],
+                record.get("validated_at"),
+                record.get("error_message"),
+            ),
+        )
+        conn.commit()
 
-    return files
+    return record
+
+
+def list_architectures() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM architectures ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_architecture(architecture_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM architectures WHERE id = ?",
+            (architecture_id,),
+        ).fetchone()
+    return row_to_dict(row)
+
+
+def update_architecture_status(
+    *,
+    architecture_id: str,
+    status: str,
+    image_tag: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    validated_at = utc_now_iso() if status == "validated" else None
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE architectures
+            SET status = ?,
+                image_tag = COALESCE(?, image_tag),
+                validated_at = COALESCE(?, validated_at),
+                error_message = ?
+            WHERE id = ?
+            """,
+            (status, image_tag, validated_at, error_message, architecture_id),
+        )
+        conn.commit()
+
+
+def create_experiment_run(record: dict[str, Any]) -> dict[str, Any]:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO experiment_runs (
+                id, architecture_id, benchmark, scene, status,
+                parameters_json, result_path, job_id, created_at,
+                finished_at, error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["id"],
+                record["architecture_id"],
+                record["benchmark"],
+                record["scene"],
+                record["status"],
+                json.dumps(record["parameters"], ensure_ascii=False),
+                record.get("result_path"),
+                record.get("job_id"),
+                record["created_at"],
+                record.get("finished_at"),
+                record.get("error_message"),
+            ),
+        )
+        conn.commit()
+
+    return record
+
+
+def list_experiment_runs() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM experiment_runs ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_experiment_run_status(
+    *,
+    run_id: str,
+    status: str,
+    result_path: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    finished_at = utc_now_iso() if status in {"done", "error"} else None
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE experiment_runs
+            SET status = ?,
+                result_path = COALESCE(?, result_path),
+                finished_at = COALESCE(?, finished_at),
+                error_message = ?
+            WHERE id = ?
+            """,
+            (status, result_path, finished_at, error_message, run_id),
+        )
+        conn.commit()

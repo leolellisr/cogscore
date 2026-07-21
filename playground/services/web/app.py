@@ -2,200 +2,257 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import requests
 import streamlit as st
-from dotenv import load_dotenv
 
-
-# ------------------------------------------------------------
-# Configuration
-# ------------------------------------------------------------
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(PROJECT_ROOT / ".env")
 
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
-DATA_ROOT = PROJECT_ROOT / "data"
-
 
 st.set_page_config(
-    page_title="CogScore Playground",
+    page_title="CogScore Online Runner",
     page_icon="🧠",
     layout="wide",
 )
 
 
-# ------------------------------------------------------------
-# API helpers
-# ------------------------------------------------------------
-
 def api_get(path: str) -> Any:
-    url = f"{API_URL}{path}"
-
-    response = requests.get(url, timeout=20)
-
-    if response.status_code >= 400:
-        raise RuntimeError(f"GET {url} failed: {response.status_code} - {response.text}")
-
-    return response.json()
+    r = requests.get(API_URL + path, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 
-def api_upload_result(file_name: str, file_bytes: bytes) -> Any:
-    url = f"{API_URL}/uploads/results"
+def api_post_json(path: str, payload: dict[str, Any]) -> Any:
+    r = requests.post(API_URL + path, json=payload, timeout=120)
+    if r.status_code >= 400:
+        raise RuntimeError(r.text)
+    return r.json()
 
-    files = {
-        "file": (file_name, file_bytes, "application/zip")
-    }
-
-    response = requests.post(url, files=files, timeout=120)
-
-    if response.status_code >= 400:
-        try:
-            detail = response.json()
-        except Exception:
-            detail = response.text
-
-        raise RuntimeError(f"Upload failed: {response.status_code} - {detail}")
-
-    return response.json()
-
-
-def safe_json_loads(value: str | None) -> Any:
-    if value is None or value == "":
-        return None
-
+def api_upload_results(filename: str, data: bytes) -> Any:
+    """Upload a result bundle and preserve the API error details."""
     try:
-        return json.loads(value)
+        response = requests.post(
+            API_URL + "/uploads/results",
+            files={
+                "file": (
+                    filename,
+                    data,
+                    "application/zip",
+                )
+            },
+            timeout=300,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Could not contact results API: {exc}") from exc
+
+    if response.ok:
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                "The results API returned success but the response was not valid JSON.\n"
+                f"HTTP status: {response.status_code}\n"
+                f"Response: {response.text[:4000]}"
+            ) from exc
+
+    content_type = response.headers.get("content-type", "")
+    request_id = (
+        response.headers.get("x-request-id")
+        or response.headers.get("x-correlation-id")
+        or response.headers.get("trace-id")
+    )
+
+    detail: Any = response.text
+    if "application/json" in content_type.lower():
+        try:
+            payload = response.json()
+            detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+        except ValueError:
+            pass
+
+    request_id_text = f"\nRequest ID: {request_id}" if request_id else ""
+    raise RuntimeError(
+        "Result upload failed.\n"
+        f"Endpoint: {API_URL}/uploads/results\n"
+        f"HTTP status: {response.status_code}\n"
+        f"Response: {detail}"
+        f"{request_id_text}"
+    )
+
+def api_upload_architecture(filename: str, data: bytes) -> Any:
+    r = requests.post(
+        API_URL + "/architectures/upload",
+        files={"file": (filename, data, "application/zip")},
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(r.text)
+    return r.json()
+
+
+def architecture_declares(architecture: dict[str, Any], benchmark: str) -> bool:
+    try:
+        manifest = json.loads(architecture.get("manifest_json") or "{}")
     except Exception:
-        return value
+        return True
+
+    benchmarks = manifest.get("benchmarks")
+    if not isinstance(benchmarks, list):
+        return True
+
+    return benchmark in benchmarks
 
 
-def dataframe_from_records(records: list[dict[str, Any]]) -> pd.DataFrame:
-    if not records:
-        return pd.DataFrame()
-
-    return pd.DataFrame(records)
-
-
-def format_status(status: str) -> str:
-    status = str(status)
-
-    if status == "done":
-        return "✅ done"
-
-    if status == "pending":
-        return "⏳ pending"
-
-    if status == "running":
-        return "🔄 running"
-
-    if status == "error":
-        return "❌ error"
-
-    return status
+def validated_architectures_for(architectures: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
+    return [
+        architecture
+        for architecture in architectures
+        if architecture.get("status") == "validated"
+        and architecture_declares(architecture, benchmark)
+    ]
 
 
-# ------------------------------------------------------------
-# Sidebar
-# ------------------------------------------------------------
-
-st.sidebar.title("CogScore Playground")
-
+st.sidebar.title("CogScore Online")
 page = st.sidebar.radio(
-    "Navigation",
+    "Menu",
     [
         "Home",
+        "Upload architecture",
         "Upload results",
-        "Runs",
+        "Architectures",
+        "Sensory experiments",
+        "Attention experiments",
+        "Motivation experiments",
+        "Learning experiments",
         "Jobs",
+        "Experiment runs",
         "Plots",
-        "Help",
+        "VNC",
     ],
 )
 
-st.sidebar.markdown("---")
-st.sidebar.caption(f"API URL: `{API_URL}`")
+st.sidebar.caption(f"API: `{API_URL}`")
 
-
-# ------------------------------------------------------------
-# Home
-# ------------------------------------------------------------
 
 if page == "Home":
-    st.title("🧠 CogScore Playground")
-
-    st.write(
-        "Online playground for uploading, validating, plotting, and comparing "
-        "CogScore cognitive architecture experiment results."
-    )
-
-    st.subheader("API status")
+    st.title("CogScore Online Runner")
 
     try:
         health = api_get("/health")
-        st.success("API is online.")
+        st.success("API online")
         st.json(health)
     except Exception as exc:
-        st.error("API is not reachable.")
+        st.error("API offline")
         st.exception(exc)
 
-    st.subheader("Current workflow")
+    st.markdown(
+        """
+This server allows external research groups to upload a REST-based cognitive architecture,
+validate it, and run CogScore sensory, attention, motivation, and learning experiments online using CoppeliaSim through VNC/noVNC.
+"""
+    )
+
+
+elif page == "Upload architecture":
+    st.title("Upload external architecture")
+
+    uploaded = st.file_uploader("architecture_bundle.zip", type=["zip"])
+
+    if uploaded is not None:
+        st.info(uploaded.name)
+
+        if st.button("Upload and create validation job"):
+            try:
+                result = api_upload_architecture(uploaded.name, uploaded.getvalue())
+                st.success("Architecture uploaded")
+                st.json(result)
+            except Exception as exc:
+                st.error("Upload failed")
+                st.exception(exc)
+
+    st.subheader("Expected bundle")
 
     st.code(
         """
-1. Upload a result_bundle.zip
-2. The API validates and imports the run
-3. A replot job is created
-4. The worker generates plots
-5. Plots become visible in this dashboard
+architecture_bundle.zip
+├── manifest.yaml
+├── Dockerfile
+├── requirements.txt
+└── app.py
         """.strip(),
         language="text",
     )
 
-
-# ------------------------------------------------------------
-# Upload results
-# ------------------------------------------------------------
-
 elif page == "Upload results":
-    st.title("📤 Upload results")
+    st.title("Upload results for plotting")
 
-    st.write(
-        "Upload a CogScore result bundle in `.zip` format. "
-        "The ZIP must contain `manifest.yaml` and `benchmark_out/`."
+    st.markdown(
+        """
+Envie um pacote ZIP contendo os resultados de uma execução.
+
+Depois do upload, o servidor irá:
+
+1. validar o pacote;
+2. importar os resultados para `data/results`;
+3. criar um job de geração de plots;
+4. disponibilizar os gráficos na aba **Plots**.
+"""
     )
 
-    uploaded_file = st.file_uploader(
-        "Select result_bundle.zip",
+    uploaded_result = st.file_uploader(
+        "Result bundle (.zip)",
         type=["zip"],
+        key="result_bundle_upload",
     )
 
-    if uploaded_file is not None:
-        st.info(f"Selected file: {uploaded_file.name}")
+    if uploaded_result is not None:
+        st.info(
+            f"Arquivo selecionado: {uploaded_result.name} "
+            f"({uploaded_result.size / 1024:.1f} KB)"
+        )
 
-        if st.button("Upload and import"):
+        if st.button(
+            "Upload and create plot job",
+            type="primary",
+            key="upload_result_button",
+        ):
             try:
-                result = api_upload_result(
-                    file_name=uploaded_file.name,
-                    file_bytes=uploaded_file.getvalue(),
-                )
+                with st.spinner("Uploading and validating results..."):
+                    result = api_upload_results(
+                        uploaded_result.name,
+                        uploaded_result.getvalue(),
+                    )
 
-                st.success("Result bundle imported successfully.")
-                st.json(result)
+                st.success("Results imported successfully.")
 
-                st.info(
-                    "A replot job was created. Keep the worker running to generate plots."
-                )
+                warnings = result.get("warnings", [])
+                for warning in warnings:
+                    st.warning(str(warning))
+
+                run = result.get("run", {})
+                job = result.get("job", {})
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.subheader("Imported run")
+                    st.json(run)
+
+                with col2:
+                    st.subheader("Plot job")
+                    st.json(job)
+
+                if job.get("id"):
+                    st.info(
+                        f"Plot job `{job['id']}` was created. "
+                        "Track its status in the Jobs page."
+                    )
 
             except Exception as exc:
-                st.error("Upload failed.")
+                st.error("Could not upload the result bundle.")
                 st.exception(exc)
-
-    st.markdown("---")
 
     st.subheader("Expected ZIP structure")
 
@@ -204,311 +261,714 @@ elif page == "Upload results":
 result_bundle.zip
 ├── manifest.yaml
 ├── benchmark_out/
-│   ├── *_summary_episode_*.csv
-│   ├── *_per_trial_episode_*.csv
-│   ├── *_java_steps_*.csv
-│   └── motivation_marta_trials.txt
+│   ├── AGENT_NAME/                 # required for learning
+│   │   ├── EXPERIMENT_NAME/
+│   │   │   └── seed.../profile/nrewards.txt
+│   │   └── ...
+│   ├── *_summary_episode_*.csv     # sensory/attention/motivation
+│   ├── *_per_trial_episode_*.csv   # sensory/attention/motivation
+│   └── other result files
 └── optional/
     ├── config.json
-    └── notes.md
+    ├── notes.md
+    └── plots/
         """.strip(),
         language="text",
     )
 
+    st.subheader("Example manifest.yaml")
 
-# ------------------------------------------------------------
-# Runs
-# ------------------------------------------------------------
+    st.code(
+        """
+agent_name: Substage3
+architecture_name: CONAIM
+benchmark: motivation
+benchmark_version: motivation_v1
+cogscore_version: "0.1.0"
+run_name: "Substage3 motivation test"
+date: "2026-07-13"
 
-elif page == "Runs":
-    st.title("📚 Imported runs")
+parameters:
+  episodes: 50
+  trials_per_experiment: 20
+  seed: 777
+  x_points: 50
+  smooth_window: 7
+
+source:
+  type: uploaded_results
+  author: Leonardo
+  notes: "Results generated locally."
+        """.strip(),
+        language="yaml",
+    )
+    
+elif page == "Architectures":
+    st.title("Architectures")
 
     try:
-        runs = api_get("/runs")
-        df = dataframe_from_records(runs)
+        items = api_get("/architectures")
 
-        if df.empty:
-            st.info("No runs imported yet.")
-        else:
-            display_df = df.copy()
+        if items:
+            df = pd.DataFrame(items)
+            st.dataframe(df, use_container_width=True)
 
-            columns_to_show = [
-                "id",
-                "agent_name",
-                "architecture_name",
-                "benchmark",
-                "benchmark_version",
-                "run_name",
-                "run_date",
-                "seed",
-                "episodes",
-                "trials_per_experiment",
-                "status",
-                "created_at",
-            ]
-
-            columns_to_show = [c for c in columns_to_show if c in display_df.columns]
-
-            st.dataframe(
-                display_df[columns_to_show],
-                use_container_width=True,
-                hide_index=True,
+            selected_id = st.selectbox(
+                "Inspect architecture",
+                [item["id"] for item in items],
             )
 
-            selected_run_id = st.selectbox(
-                "Select run to inspect",
-                options=display_df["id"].tolist(),
-            )
+            selected_arch = next(item for item in items if item["id"] == selected_id)
 
-            if selected_run_id:
-                run = api_get(f"/runs/{selected_run_id}")
+            st.subheader("Architecture details")
+            st.json(selected_arch)
 
-                st.subheader("Run details")
-                st.json(run)
+            st.subheader("Manifest")
 
-                manifest = safe_json_loads(run.get("manifest_json"))
-
-                st.subheader("Manifest")
+            try:
+                manifest = json.loads(selected_arch.get("manifest_json") or "{}")
                 st.json(manifest)
 
+                declared = manifest.get("benchmarks", [])
+                if isinstance(declared, list):
+                    st.write("Declared benchmarks:")
+                    st.write(", ".join(str(x) for x in declared))
+
+                    if "learning" in declared:
+                        st.success("This architecture declares support for learning.")
+                    else:
+                        st.warning("This architecture does not declare support for learning.")
+            except Exception:
+                st.warning("Could not parse manifest_json.")
+        else:
+            st.info("No architectures uploaded yet.")
     except Exception as exc:
-        st.error("Could not load runs.")
         st.exception(exc)
 
+elif page == "Sensory experiments":
+    st.title("Sensory experiments")
 
-# ------------------------------------------------------------
-# Jobs
-# ------------------------------------------------------------
+    architectures = api_get("/architectures")
+    validated = validated_architectures_for(architectures, "sensory_buffer")
+
+    if not validated:
+        st.warning("No validated architecture compatible with this benchmark is available.")
+    else:
+        labels = [f"{a['name']} {a['version']} ({a['id']})" for a in validated]
+        selected = st.selectbox("Architecture", labels)
+        arch = validated[labels.index(selected)]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            episodes = st.number_input("Episodes", min_value=1, value=1)
+            trials_per_delay = st.number_input("Trials per delay", min_value=1, value=3)
+
+        with col2:
+            resolution = st.number_input("Resolution", min_value=8, value=64)
+            patch_size = st.number_input("Patch size", min_value=1, value=8)
+
+        with col3:
+            scene = st.text_input("Scene", value="sperling.ttt")
+            mode = st.selectbox("Mode", ["vnc", "headless"])
+
+        delays_text = st.text_input("Delays ms", value="0,50,100,220,500,1000")
+        delays_ms = [int(x.strip()) for x in delays_text.split(",") if x.strip()]
+
+        if st.button("Create sensory experiment job"):
+            payload = {
+                "architecture_id": arch["id"],
+                "benchmark": "sensory_buffer",
+                "scene": scene,
+                "episodes": int(episodes),
+                "trials_per_delay": int(trials_per_delay),
+                "delays_ms": delays_ms,
+                "resolution": int(resolution),
+                "patch_size": int(patch_size),
+                "mode": mode,
+            }
+
+            try:
+                result = api_post_json("/jobs/run-experiment", payload)
+                st.success("Experiment job created")
+                st.json(result)
+            except Exception as exc:
+                st.error("Could not create job")
+                st.exception(exc)
+
+elif page == "Attention experiments":
+    st.title("Attention experiments")
+
+    try:
+        architectures = api_get("/architectures")
+    except Exception as exc:
+        st.error("Could not load architectures")
+        st.exception(exc)
+        st.stop()
+
+    validated = validated_architectures_for(architectures, "attention_posner")
+
+    if not validated:
+        st.warning("No validated architecture compatible with this benchmark is available.")
+    else:
+        labels = [f"{a['name']} {a['version']} ({a['id']})" for a in validated]
+        selected = st.selectbox("Architecture", labels)
+        arch = validated[labels.index(selected)]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            episodes = st.number_input(
+                "Episodes",
+                min_value=1,
+                value=1,
+                key="attention_episodes",
+            )
+
+            trials_per_experiment = st.number_input(
+                "Trials per experiment",
+                min_value=1,
+                value=20,
+                key="attention_trials_per_experiment",
+            )
+
+        with col2:
+            map_width = st.number_input(
+                "Attention map width",
+                min_value=8,
+                value=32,
+                key="attention_map_width",
+            )
+
+            map_height = st.number_input(
+                "Attention map height",
+                min_value=8,
+                value=32,
+                key="attention_map_height",
+            )
+
+        with col3:
+            scene = st.text_input(
+                "Scene",
+                value="posner.ttt",
+                key="attention_scene",
+            )
+
+            mode = st.selectbox(
+                "Mode",
+                ["vnc", "headless"],
+                key="attention_mode",
+            )
+
+        col4, col5 = st.columns(2)
+
+        with col4:
+            cycles_per_trial = st.number_input(
+                "Cycles per trial",
+                min_value=1,
+                value=30,
+                key="attention_cycles_per_trial",
+            )
+
+        with col5:
+            seed = st.number_input(
+                "Seed",
+                min_value=0,
+                value=777,
+                key="attention_seed",
+            )
+
+        experiments_text = st.text_input(
+            "Posner experiments",
+            value="1,2,3,4,5",
+            help="Use 1,2,3,4,5 to run all Posner attention experiments.",
+            key="attention_experiments_text",
+        )
+
+        try:
+            posner_experiments = [
+                int(x.strip())
+                for x in experiments_text.split(",")
+                if x.strip()
+            ]
+        except ValueError:
+            st.error("Invalid Posner experiment list. Use something like: 1,2,3,4,5")
+            st.stop()
+
+        st.info(
+            "This will run the attention_posner benchmark using the selected external architecture."
+        )
+
+        if st.button("Create attention experiment job"):
+            payload = {
+                "architecture_id": arch["id"],
+                "benchmark": "attention_posner",
+                "scene": scene,
+                "episodes": int(episodes),
+                "posner_experiments": posner_experiments,
+                "trials_per_experiment": int(trials_per_experiment),
+                "map_width": int(map_width),
+                "map_height": int(map_height),
+                "cycles_per_trial": int(cycles_per_trial),
+                "seed": int(seed),
+                "mode": mode,
+            }
+
+            try:
+                result = api_post_json("/jobs/run-experiment", payload)
+                st.success("Attention Posner experiment job created")
+                st.json(result)
+            except Exception as exc:
+                st.error("Could not create attention experiment job")
+                st.exception(exc)
+                
+
+elif page == "Motivation experiments":
+    st.title("Motivation experiments")
+
+    try:
+        architectures = api_get("/architectures")
+    except Exception as exc:
+        st.error("Could not load architectures")
+        st.exception(exc)
+        st.stop()
+
+    validated = validated_architectures_for(architectures, "motivation")
+
+    if not validated:
+        st.warning("No validated architecture compatible with this benchmark is available.")
+    else:
+        labels = [f"{a['name']} {a['version']} ({a['id']})" for a in validated]
+        selected = st.selectbox("Architecture", labels, key="motivation_architecture")
+        arch = validated[labels.index(selected)]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            episodes = st.number_input(
+                "Episodes",
+                min_value=1,
+                value=1,
+                key="motivation_episodes",
+            )
+
+            trials_per_experiment = st.number_input(
+                "Trials per experiment",
+                min_value=1,
+                value=20,
+                key="motivation_trials_per_experiment",
+            )
+
+        with col2:
+            cycles_per_motivation_trial = st.number_input(
+                "Cycles per motivation trial",
+                min_value=1,
+                value=30,
+                key="motivation_cycles_per_trial",
+            )
+
+            seed = st.number_input(
+                "Seed",
+                min_value=0,
+                value=777,
+                key="motivation_seed",
+            )
+
+        with col3:
+            scene = st.text_input(
+                "Scene",
+                value="mot.ttt",
+                key="motivation_scene",
+            )
+
+            mode = st.selectbox(
+                "Mode",
+                ["vnc", "headless"],
+                key="motivation_mode",
+            )
+
+        experiments_text = st.text_input(
+            "Motivation experiments",
+            value="1,2,3,4,5",
+            help="Use 1,2,3,4,5 to run all motivation experiments.",
+            key="motivation_experiments_text",
+        )
+
+        try:
+            motivation_experiments = [
+                int(x.strip())
+                for x in experiments_text.split(",")
+                if x.strip()
+            ]
+        except ValueError:
+            st.error("Invalid motivation experiment list. Use something like: 1,2,3,4,5")
+            st.stop()
+
+        if not motivation_experiments:
+            st.error("Provide at least one motivation experiment id.")
+            st.stop()
+
+        st.info(
+            "This will run the motivation benchmark using the selected external architecture. "
+            "The worker will call /motivation/act on the architecture container."
+        )
+
+        if st.button("Create motivation experiment job"):
+            payload = {
+                "architecture_id": arch["id"],
+                "benchmark": "motivation",
+                "scene": scene,
+                "episodes": int(episodes),
+                "motivation_experiments": motivation_experiments,
+                "trials_per_experiment": int(trials_per_experiment),
+                "cycles_per_motivation_trial": int(cycles_per_motivation_trial),
+                "seed": int(seed),
+                "mode": mode,
+            }
+
+            try:
+                result = api_post_json("/jobs/run-experiment", payload)
+                st.success("Motivation experiment job created")
+                st.json(result)
+            except Exception as exc:
+                st.error("Could not create motivation experiment job")
+                st.exception(exc)
+
+elif page == "Learning experiments":
+    st.title("Learning experiments")
+
+    try:
+        architectures = api_get("/architectures")
+    except Exception as exc:
+        st.error("Could not load architectures")
+        st.exception(exc)
+        st.stop()
+
+    validated = validated_architectures_for(architectures, "learning")
+
+    if not validated:
+        st.warning("No validated architecture compatible with this benchmark is available.")
+        st.info(
+            "The selected architecture bundle must declare `learning` in its manifest.yaml "
+            "under the `benchmarks` field."
+        )
+    else:
+        labels = [f"{a['name']} {a['version']} ({a['id']})" for a in validated]
+        selected = st.selectbox("Architecture", labels, key="learning_architecture")
+        arch = validated[labels.index(selected)]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            episodes = st.number_input(
+                "Episodes",
+                min_value=1,
+                value=1,
+                key="learning_episodes",
+            )
+
+            steps_per_episode = st.number_input(
+                "Steps per episode",
+                min_value=1,
+                value=100,
+                key="learning_steps_per_episode",
+            )
+
+        with col2:
+            seed = st.number_input(
+                "Seed",
+                min_value=0,
+                value=777,
+                key="learning_seed",
+            )
+
+            aggregate_n = st.number_input(
+                "Aggregate N",
+                min_value=1,
+                value=5,
+                key="learning_aggregate_n",
+                help="Window used by learning.py when aggregating epochs for plots.",
+            )
+
+        with col3:
+            scene = st.text_input(
+                "Scene",
+                value="learning/testing_s1A.ttt",
+                key="learning_scene",
+            )
+
+            mode = st.selectbox(
+                "Mode",
+                ["vnc", "headless"],
+                key="learning_mode",
+            )
+
+        stages_text = st.text_input(
+            "Learning stages",
+            value="Substage1,Substage2,Substage3,Substage4,Substage5",
+            help="Use the developmental sequence Substage1..Substage5 to run the complete learning evaluation.",
+            key="learning_stages_text",
+        )
+
+        tests_text = st.text_input(
+            "Learning tests",
+            value="testA,testB,testAB",
+            help="Substage1-3 usually use testA/testB; Substage4 uses testA/testAB/testB; Substage5 uses testA.",
+            key="learning_tests_text",
+        )
+
+        learning_stages = [
+            x.strip()
+            for x in stages_text.split(",")
+            if x.strip()
+        ]
+
+        learning_tests = [
+            x.strip()
+            for x in tests_text.split(",")
+            if x.strip()
+        ]
+
+        if not learning_stages:
+            st.error("Provide at least one learning stage.")
+            st.stop()
+
+        if not learning_tests:
+            st.error("Provide at least one learning test.")
+            st.stop()
+
+        st.info(
+            "This will run the learning benchmark using the selected external architecture. "
+            "The worker will call /learning/act on the architecture container."
+        )
+
+        st.subheader("Expected output structure")
+
+        st.code(
+            """
+benchmark_out/
+├── Substage1/
+│   ├── testA/seed777/profile/nrewards.txt
+│   └── testB/seed777/profile/nrewards.txt
+├── Substage2/
+│   ├── testA/seed777/profile/nrewards.txt
+│   └── testB/seed777/profile/nrewards.txt
+├── Substage3/
+│   ├── testA/seed777/profile/nrewards.txt
+│   └── testB/seed777/profile/nrewards.txt
+├── Substage4/
+│   ├── testA/seed777/profile/nrewards.txt
+│   ├── testAB/seed777/profile/nrewards.txt
+│   └── testB/seed777/profile/nrewards.txt
+└── Substage5/
+    └── testA/seed777/profile/nrewards.txt
+            """.strip(),
+            language="text",
+        )
+
+        if st.button("Create learning experiment job"):
+            payload = {
+                "architecture_id": arch["id"],
+                "benchmark": "learning",
+                "scene": scene,
+                "episodes": int(episodes),
+                "learning_stages": learning_stages,
+                "learning_tests": learning_tests,
+                "steps_per_episode": int(steps_per_episode),
+                "seed": int(seed),
+                "aggregate_n": int(aggregate_n),
+                "mode": mode,
+            }
+
+            try:
+                result = api_post_json("/jobs/run-experiment", payload)
+                st.success("Learning experiment job created")
+                st.json(result)
+            except Exception as exc:
+                st.error("Could not create learning experiment job")
+                st.exception(exc)
 
 elif page == "Jobs":
-    st.title("⚙️ Jobs")
+    st.title("Jobs")
 
-    if st.button("Refresh jobs"):
-        st.rerun()
+    jobs = api_get("/jobs")
+    if jobs:
+        st.dataframe(pd.DataFrame(jobs), use_container_width=True)
 
-    try:
-        jobs = api_get("/jobs")
-        df = dataframe_from_records(jobs)
+        selected = st.selectbox("Inspect job", [j["id"] for j in jobs])
+        job = next(j for j in jobs if j["id"] == selected)
 
-        if df.empty:
-            st.info("No jobs found.")
+        st.subheader("Input")
+        st.json(json.loads(job["input_json"]))
+
+        st.subheader("Output")
+        if job.get("output_json"):
+            st.json(json.loads(job["output_json"]))
         else:
-            display_df = df.copy()
-
-            if "status" in display_df.columns:
-                display_df["status_display"] = display_df["status"].apply(format_status)
-
-            columns_to_show = [
-                "id",
-                "job_type",
-                "status_display",
-                "created_at",
-                "started_at",
-                "finished_at",
-                "error_message",
-            ]
-
-            columns_to_show = [c for c in columns_to_show if c in display_df.columns]
-
-            st.dataframe(
-                display_df[columns_to_show],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            selected_job_id = st.selectbox(
-                "Select job to inspect",
-                options=display_df["id"].tolist(),
-            )
-
-            if selected_job_id:
-                job = api_get(f"/jobs/{selected_job_id}")
-
-                st.subheader("Job details")
-                st.json(job)
-
-                input_json = safe_json_loads(job.get("input_json"))
-                output_json = safe_json_loads(job.get("output_json"))
-
-                st.subheader("Input")
-                st.json(input_json)
-
-                st.subheader("Output")
-                st.json(output_json)
-
-                log_path = job.get("log_path")
-
-                if log_path:
-                    log_dir = Path(log_path)
-
-                    stdout_path = log_dir / "stdout.log"
-                    stderr_path = log_dir / "stderr.log"
-
-                    if stdout_path.exists():
-                        st.subheader("stdout.log")
-                        st.code(stdout_path.read_text(encoding="utf-8", errors="replace"))
-
-                    if stderr_path.exists():
-                        st.subheader("stderr.log")
-                        st.code(stderr_path.read_text(encoding="utf-8", errors="replace"))
-
-    except Exception as exc:
-        st.error("Could not load jobs.")
-        st.exception(exc)
+            st.info("No output yet.")
+    else:
+        st.info("No jobs yet.")
 
 
-# ------------------------------------------------------------
-# Plots
-# ------------------------------------------------------------
+elif page == "Experiment runs":
+    st.title("Experiment runs")
+
+    runs = api_get("/experiment-runs")
+
+    if runs:
+        df = pd.DataFrame(runs)
+
+        benchmarks = ["all"] + sorted(
+            str(x)
+            for x in df.get("benchmark", pd.Series(dtype=str)).dropna().unique()
+        )
+
+        selected_benchmark = st.selectbox(
+            "Benchmark filter",
+            benchmarks,
+            key="experiment_runs_benchmark_filter",
+        )
+
+        if selected_benchmark != "all" and "benchmark" in df.columns:
+            df = df[df["benchmark"] == selected_benchmark]
+
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No experiment runs yet.")
 
 elif page == "Plots":
-    st.title("📈 Generated plots")
+    from pathlib import Path
 
-    try:
-        plots = api_get("/plots")
-        df = dataframe_from_records(plots)
+    st.title("Plots")
 
-        if df.empty:
-            st.info("No plot files found yet.")
-            st.write("Run the worker after uploading result bundles.")
-        else:
-            df["benchmark"] = df["relative_path"].apply(
-                lambda p: str(p).split("/")[0] if "/" in str(p) else "unknown"
+    plots_dir = Path(
+        os.getenv("PLOTS_DIR", "/data/plots")
+    ).resolve()
+
+    st.caption(f"Diretório: `{plots_dir}`")
+
+    if st.button("Atualizar plots"):
+        st.rerun()
+
+    if not plots_dir.exists():
+        st.error(f"Diretório de plots não encontrado: {plots_dir}")
+        st.stop()
+
+    supported_extensions = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".svg",
+    }
+
+    plot_files = sorted(
+        [
+            path
+            for path in plots_dir.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in supported_extensions
+        ],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    html_files = sorted(
+        [
+            path
+            for path in plots_dir.rglob("*.html")
+            if path.is_file()
+        ],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not plot_files and not html_files:
+        st.info("Nenhum plot encontrado em data/plots.")
+        st.stop()
+
+    if plot_files:
+        st.subheader("Imagens")
+
+        selected_plot = st.selectbox(
+            "Selecione um plot",
+            plot_files,
+            format_func=lambda path: str(path.relative_to(plots_dir)),
+        )
+
+        st.image(
+            str(selected_plot),
+            caption=str(selected_plot.relative_to(plots_dir)),
+            use_container_width=True,
+        )
+
+        with selected_plot.open("rb") as plot_file:
+            st.download_button(
+                "Baixar plot",
+                data=plot_file.read(),
+                file_name=selected_plot.name,
+                key=f"download-{selected_plot}",
             )
 
-            df["agent"] = df["relative_path"].apply(
-                lambda p: str(p).split("/")[1] if len(str(p).split("/")) > 1 else "unknown"
-            )
+        st.subheader("Galeria")
 
-            benchmarks = sorted(df["benchmark"].dropna().unique().tolist())
-            agents = sorted(df["agent"].dropna().unique().tolist())
+        columns = st.columns(2)
 
-            selected_benchmark = st.selectbox(
-                "Benchmark",
-                options=["All"] + benchmarks,
-            )
-
-            selected_agent = st.selectbox(
-                "Agent",
-                options=["All"] + agents,
-            )
-
-            filtered = df.copy()
-
-            if selected_benchmark != "All":
-                filtered = filtered[filtered["benchmark"] == selected_benchmark]
-
-            if selected_agent != "All":
-                filtered = filtered[filtered["agent"] == selected_agent]
-
-            st.write(f"Showing {len(filtered)} plot file(s).")
-
-            if filtered.empty:
-                st.warning("No plots match the selected filters.")
-            else:
-                selected_plot = st.selectbox(
-                    "Select plot",
-                    options=filtered["relative_path"].tolist(),
+        for index, plot_path in enumerate(plot_files):
+            with columns[index % 2]:
+                st.markdown(
+                    f"**{plot_path.relative_to(plots_dir)}**"
+                )
+                st.image(
+                    str(plot_path),
+                    use_container_width=True,
                 )
 
-                selected_row = filtered[filtered["relative_path"] == selected_plot].iloc[0]
-                plot_path = Path(selected_row["path"])
+    if html_files:
+        import streamlit.components.v1 as components
 
-                st.subheader(selected_row["name"])
-                st.caption(str(plot_path))
+        st.subheader("Plots HTML interativos")
 
-                if plot_path.exists() and plot_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-                    st.image(str(plot_path), use_container_width=True)
+        selected_html = st.selectbox(
+            "Selecione um HTML",
+            html_files,
+            format_func=lambda path: str(path.relative_to(plots_dir)),
+            key="selected_html_plot",
+        )
 
-                    with plot_path.open("rb") as f:
-                        st.download_button(
-                            label="Download plot",
-                            data=f.read(),
-                            file_name=plot_path.name,
-                            mime="image/png",
-                        )
+        html_content = selected_html.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
 
-                elif plot_path.exists():
-                    st.info("Preview is not available for this file type.")
+        components.html(
+            html_content,
+            height=800,
+            scrolling=True,
+        )
 
-                    with plot_path.open("rb") as f:
-                        st.download_button(
-                            label="Download file",
-                            data=f.read(),
-                            file_name=plot_path.name,
-                        )
-                else:
-                    st.error("Plot file does not exist on disk.")
+elif page == "VNC":
+    import streamlit.components.v1 as components
 
-            st.subheader("All plot files")
-            st.dataframe(
-                filtered[["relative_path", "size_bytes"]],
-                use_container_width=True,
-                hide_index=True,
-            )
+    st.title("CoppeliaSim VNC")
 
-    except Exception as exc:
-        st.error("Could not load plots.")
-        st.exception(exc)
-
-
-# ------------------------------------------------------------
-# Help
-# ------------------------------------------------------------
-
-elif page == "Help":
-    st.title("❓ Help")
-
-    st.subheader("How to run locally")
-
-    st.code(
-        """
-# Terminal 1: API
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/api
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Terminal 2: Worker
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/worker
-python -m worker.main
-
-# Terminal 3: Web
-cd ~/git/cogscore-playground
-source .venv/bin/activate
-cd services/web
-streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-        """.strip(),
-        language="bash",
+    vnc_url = os.getenv(
+        "VNC_PUBLIC_URL",
+        "http://localhost:6080/vnc.html"
+        "?autoconnect=true"
+        "&resize=scale"
+        "&password=123",
     )
 
-    st.subheader("Expected result bundle")
+    st.caption(f"noVNC: `{vnc_url}`")
 
-    st.code(
-        """
-result_bundle.zip
-├── manifest.yaml
-├── benchmark_out/
-│   ├── *_summary_episode_*.csv
-│   ├── *_per_trial_episode_*.csv
-│   ├── *_java_steps_*.csv
-│   └── motivation_marta_trials.txt
-└── optional/
-    ├── config.json
-    └── notes.md
-        """.strip(),
-        language="text",
+    components.iframe(
+        vnc_url,
+        height=850,
+        scrolling=True,
     )
 
-    st.subheader("Important paths")
-
-    st.code(
-        f"""
-Project root: {PROJECT_ROOT}
-Data root:    {DATA_ROOT}
-API URL:      {API_URL}
-        """.strip(),
-        language="text",
+    st.markdown(
+        f"[Abrir noVNC em uma nova aba]({vnc_url})"
     )
