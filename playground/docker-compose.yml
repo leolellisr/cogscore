@@ -41,6 +41,8 @@ services:
       - PROJECT_ROOT=/workspace
       - DATABASE_PATH=/data/db/playground.sqlite
       - COGSCORE_DOCKER_NETWORK=${COGSCORE_DOCKER_NETWORK:-cogscore_online_net}
+      - COGSCORE_SIM_CONTAINER=${COGSCORE_SIM_CONTAINER:-cogscore-sim-vnc}
+      - COGSCORE_SIM_SERVICE=${COGSCORE_SIM_SERVICE:-sim-vnc}
       - PLOTS_DIR=/data/plots
       - PLOT_TIMEOUT_SECONDS=${PLOT_TIMEOUT_SECONDS:-1800}
     volumes:
@@ -54,7 +56,7 @@ services:
       api:
         condition: service_healthy
       sim-vnc:
-        condition: service_started
+        condition: service_healthy
     networks:
       - cogscore_online_net
 
@@ -94,7 +96,9 @@ services:
 
   sim-vnc:
     restart: unless-stopped
-    build: ./services/sim-vnc
+    build:
+      context: .
+      dockerfile: services/sim-vnc/Dockerfile
     container_name: cogscore-sim-vnc
     init: true
     stop_grace_period: 30s
@@ -106,6 +110,9 @@ services:
       - API_URL=http://api:8000
       - PLOTS_DIR=/data/plots
       - VNC_PUBLIC_URL=http://localhost:6080/vnc.html?autoconnect=true&resize=scale
+      - COPPELIASIM_ROOT=/opt/CoppeliaSim
+      - COPPELIASIM_AUTO_START=${COPPELIASIM_AUTO_START:-1}
+      - COGSCORE_OPEN_COPPELIA=${COGSCORE_OPEN_COPPELIA:-1}
     shm_size: "2gb"
     volumes:
       - ./data:/data
@@ -115,6 +122,18 @@ services:
     ports:
       - "6080:6080"
       - "5901:5901"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -x /opt/CoppeliaSim/coppeliaSim &&
+          curl -fsS http://localhost:6080/vnc.html >/dev/null &&
+          pgrep -x Xvfb >/dev/null &&
+          pgrep -f websockify >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - cogscore_online_net
 

@@ -53,6 +53,12 @@ done
 
 mkdir -p "$OUT"
 
+if [[ "${COGSCORE_OPEN_COPPELIA:-1}" == "1" ]]; then
+  /usr/local/bin/cogscore-open-coppelia \
+    "$SCENE" \
+    "$OUT/coppelia.log"
+fi
+
 echo "[learning-remote] agent url: $AGENT_URL"
 echo "[learning-remote] scene: $SCENE"
 echo "[learning-remote] out: $OUT"

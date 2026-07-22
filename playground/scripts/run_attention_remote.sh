@@ -63,6 +63,12 @@ done
 
 mkdir -p "$OUT"
 
+if [[ "${COGSCORE_OPEN_COPPELIA:-1}" == "1" ]]; then
+  /usr/local/bin/cogscore-open-coppelia \
+    "$SCENE" \
+    "$OUT/coppelia.log"
+fi
+
 echo "[attention-remote] agent url: $AGENT_URL"
 echo "[attention-remote] scene: $SCENE"
 echo "[attention-remote] out: $OUT"

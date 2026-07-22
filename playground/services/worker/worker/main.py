@@ -53,6 +53,12 @@ logging.basicConfig(
 logger = logging.getLogger("cogscore-worker")
 
 ACTIVE_ARCHITECTURE_CONTAINERS: set[str] = set()
+SIMULATOR_CONTAINER_NAME = os.getenv(
+    "COGSCORE_SIM_CONTAINER", "cogscore-sim-vnc"
+).strip()
+SIMULATOR_COMPOSE_SERVICE = os.getenv(
+    "COGSCORE_SIM_SERVICE", "sim-vnc"
+).strip()
 
 
 def info(message: str) -> None:
@@ -111,6 +117,100 @@ def tail_log(path: Path, *, max_chars: int = 8000) -> str:
     except FileNotFoundError:
         return ""
     return text[-max_chars:].strip()
+
+
+def docker_container_is_running(container_name: str) -> bool:
+    if not container_name:
+        return False
+
+    completed = subprocess.run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            container_name,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return completed.returncode == 0 and completed.stdout.strip() == "true"
+
+
+def resolve_simulator_container() -> str:
+    """Return the running Compose container that implements the sim-vnc service.
+
+    Compose can temporarily rename an old container while recreating a service.
+    Looking up the service label keeps experiments working even when the literal
+    container name is no longer available.
+    """
+    if docker_container_is_running(SIMULATOR_CONTAINER_NAME):
+        return SIMULATOR_CONTAINER_NAME
+
+    completed = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "status=running",
+            "--filter",
+            f"label=com.docker.compose.service={SIMULATOR_COMPOSE_SERVICE}",
+            "--format",
+            "{{.ID}} {{.Names}}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(
+            "Could not query the Docker Compose simulator service: " + detail
+        )
+
+    candidates = [
+        line.split(maxsplit=1)
+        for line in completed.stdout.splitlines()
+        if line.strip()
+    ]
+    if not candidates:
+        raise RuntimeError(
+            "No running Docker container was found for Compose service "
+            f"{SIMULATOR_COMPOSE_SERVICE!r}. Run 'docker compose ps' and "
+            "recreate the sim-vnc service before starting an experiment."
+        )
+
+    if len(candidates) > 1:
+        names = ", ".join(
+            parts[1] if len(parts) > 1 else parts[0]
+            for parts in candidates
+        )
+        raise RuntimeError(
+            "More than one running simulator container was found for Compose "
+            f"service {SIMULATOR_COMPOSE_SERVICE!r}: {names}. Remove stale "
+            "Compose containers before starting an experiment."
+        )
+
+    container_id, *name = candidates[0]
+    resolved_name = name[0] if name else container_id
+    info(
+        "Resolved simulator container by Compose service label: "
+        f"{resolved_name} ({container_id})"
+    )
+    return container_id
+
+
+def command_failure_message(
+    description: str,
+    completed: subprocess.CompletedProcess[str],
+    stderr_path: Path,
+) -> str:
+    detail = tail_log(stderr_path, max_chars=4000)
+    message = f"{description} failed with exit code {completed.returncode}"
+    if detail:
+        message += f": {detail}"
+    return message
 
 
 def docker_rm_force(container_name: str) -> None:
@@ -580,10 +680,12 @@ def handle_run_sensory_remote(job: dict[str, Any], job_dir: Path) -> dict[str, A
 
         update_experiment_run_status(run_id=run_id, status="running")
 
+        simulator_container = resolve_simulator_container()
+
         command = [
             "docker",
             "exec",
-            "cogscore-sim-vnc",
+            simulator_container,
             "bash",
             "/workspace/scripts/run_sensory_remote.sh",
             "--agent-url",
@@ -612,13 +714,16 @@ def handle_run_sensory_remote(job: dict[str, Any], job_dir: Path) -> dict[str, A
         )
 
         if completed.returncode != 0:
+            error_message = command_failure_message(
+                "Remote sensory experiment", completed, stderr_path
+            )
             update_experiment_run_status(
                 run_id=run_id,
                 status="error",
                 result_path=str(result_dir),
-                error_message="Remote sensory experiment failed",
+                error_message=error_message,
             )
-            raise RuntimeError("Remote sensory experiment failed")
+            raise RuntimeError(error_message)
 
                 # Automatically create a result bundle after the benchmark finishes.
         # The bundle is written under /data/uploads/result_bundles on the host:
@@ -744,10 +849,12 @@ def handle_run_attention_remote(job: dict[str, Any], job_dir: Path) -> dict[str,
 
         update_experiment_run_status(run_id=run_id, status="running")
 
+        simulator_container = resolve_simulator_container()
+
         command = [
             "docker",
             "exec",
-            "cogscore-sim-vnc",
+            simulator_container,
             "bash",
             "/workspace/scripts/run_attention_remote.sh",
             "--agent-url",
@@ -780,13 +887,16 @@ def handle_run_attention_remote(job: dict[str, Any], job_dir: Path) -> dict[str,
         )
 
         if completed.returncode != 0:
+            error_message = command_failure_message(
+                "Remote attention Posner experiment", completed, stderr_path
+            )
             update_experiment_run_status(
                 run_id=run_id,
                 status="error",
                 result_path=str(result_dir),
-                error_message="Remote attention Posner experiment failed",
+                error_message=error_message,
             )
-            raise RuntimeError("Remote attention Posner experiment failed")
+            raise RuntimeError(error_message)
 
         bundles_dir = UPLOADS_DIR / "result_bundles"
         bundles_dir.mkdir(parents=True, exist_ok=True)
@@ -914,10 +1024,12 @@ def handle_run_learning_remote(job: dict[str, Any], job_dir: Path) -> dict[str, 
 
         update_experiment_run_status(run_id=run_id, status="running")
 
+        simulator_container = resolve_simulator_container()
+
         command = [
             "docker",
             "exec",
-            "cogscore-sim-vnc",
+            simulator_container,
             "bash",
             "/workspace/scripts/run_learning_remote.sh",
             "--agent-url",
@@ -946,13 +1058,16 @@ def handle_run_learning_remote(job: dict[str, Any], job_dir: Path) -> dict[str, 
         )
 
         if completed.returncode != 0:
+            error_message = command_failure_message(
+                "Remote learning experiment", completed, stderr_path
+            )
             update_experiment_run_status(
                 run_id=run_id,
                 status="error",
                 result_path=str(result_dir),
-                error_message="Remote learning experiment failed",
+                error_message=error_message,
             )
-            raise RuntimeError("Remote learning experiment failed")
+            raise RuntimeError(error_message)
 
         update_experiment_run_status(
             run_id=run_id,
@@ -1023,10 +1138,12 @@ def handle_run_motivation_remote(job: dict[str, Any], job_dir: Path) -> dict[str
 
         update_experiment_run_status(run_id=run_id, status="running")
 
+        simulator_container = resolve_simulator_container()
+
         command = [
             "docker",
             "exec",
-            "cogscore-sim-vnc",
+            simulator_container,
             "bash",
             "/workspace/scripts/run_motivation_remote.sh",
             "--agent-url",
@@ -1055,13 +1172,16 @@ def handle_run_motivation_remote(job: dict[str, Any], job_dir: Path) -> dict[str
         )
 
         if completed.returncode != 0:
+            error_message = command_failure_message(
+                "Remote motivation experiment", completed, stderr_path
+            )
             update_experiment_run_status(
                 run_id=run_id,
                 status="error",
                 result_path=str(result_dir),
-                error_message="Remote motivation experiment failed",
+                error_message=error_message,
             )
-            raise RuntimeError("Remote motivation experiment failed")
+            raise RuntimeError(error_message)
 
         bundles_dir = UPLOADS_DIR / "result_bundles"
         bundles_dir.mkdir(parents=True, exist_ok=True)
