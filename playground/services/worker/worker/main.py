@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+import socket
 
 DEFAULT_API_DIR = Path(__file__).resolve().parents[2] / "api"
 API_DIR = Path(os.getenv("API_DIR", str(DEFAULT_API_DIR))).resolve()
@@ -564,12 +565,19 @@ def handle_validate_architecture(job: dict[str, Any], job_dir: Path) -> dict[str
     )
 
     if build.returncode != 0:
+        detail = tail_log(stderr_path, max_chars=4000)
+        error_message = "Docker build failed"
+
+        if detail:
+            error_message = f"{error_message}: {detail}"
+
         update_architecture_status(
             architecture_id=architecture_id,
             status="error",
-            error_message="Docker build failed",
+            error_message=error_message,
         )
-        raise RuntimeError("Docker build failed")
+
+        raise RuntimeError(error_message)
 
     try:
         start_architecture_container(
@@ -1736,6 +1744,13 @@ def process_job(job: dict[str, Any]) -> None:
     job_id = str(job["id"])
     job_type = str(job["job_type"])
 
+    info(
+        f"Processing job={job_id} "
+        f"type={job_type} "
+        f"hostname={socket.gethostname()} "
+        f"pid={os.getpid()} "
+        f"docker_host={os.getenv('DOCKER_HOST')!r}"
+    )
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1780,6 +1795,18 @@ def process_job(job: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    os.environ.setdefault(
+        "DOCKER_HOST",
+        "unix:///var/run/docker.sock",
+    )
+
+    info(
+        f"Worker identity: "
+        f"hostname={socket.gethostname()} "
+        f"pid={os.getpid()} "
+        f"docker_host={os.getenv('DOCKER_HOST')!r} "
+        f"path={os.getenv('PATH')!r}"
+    )
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
     signal.signal(signal.SIGINT, handle_shutdown_signal)
 
