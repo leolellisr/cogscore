@@ -141,7 +141,7 @@ page = st.sidebar.radio(
         "Upload architecture",
         "Upload results",
         "Architectures",
-        "Sensory experiments",
+        "Sensing experiments",
         "Attention experiments",
         "Motivation experiments",
         "Learning experiments",
@@ -169,7 +169,7 @@ if page == "Home":
     st.markdown(
         """
 This server allows external research groups to upload a REST-based cognitive architecture,
-validate it, and run CogScore sensory, attention, motivation, and learning experiments online using CoppeliaSim through VNC/noVNC.
+validate it, and run CogScore sensing, attention, motivation, and learning experiments online using CoppeliaSim through VNC/noVNC.
 """
     )
 
@@ -209,14 +209,14 @@ elif page == "Upload results":
 
     st.markdown(
         """
-Envie um pacote ZIP contendo os resultados de uma execução.
+Upload a ZIP bundle containing the results of an experiment run.
 
-Depois do upload, o servidor irá:
+After the upload, the server will:
 
-1. validar o pacote;
-2. importar os resultados para `data/results`;
-3. criar um job de geração de plots;
-4. disponibilizar os gráficos na aba **Plots**.
+1. validate the bundle;
+2. import the results into `data/results`;
+3. create a plot-generation job;
+4. make the charts available on the **Plots** page.
 """
     )
 
@@ -228,7 +228,7 @@ Depois do upload, o servidor irá:
 
     if uploaded_result is not None:
         st.info(
-            f"Arquivo selecionado: {uploaded_result.name} "
+            f"Selected file: {uploaded_result.name} "
             f"({uploaded_result.size / 1024:.1f} KB)"
         )
 
@@ -284,8 +284,8 @@ result_bundle.zip
 │   │   ├── EXPERIMENT_NAME/
 │   │   │   └── seed.../profile/nrewards.txt
 │   │   └── ...
-│   ├── *_summary_episode_*.csv     # sensory/attention/motivation
-│   ├── *_per_trial_episode_*.csv   # sensory/attention/motivation
+│   ├── *_summary_episode_*.csv     # sensing/attention/motivation
+│   ├── *_per_trial_episode_*.csv   # sensing/attention/motivation
 │   └── other result files
 └── optional/
     ├── config.json
@@ -364,8 +364,8 @@ elif page == "Architectures":
     except Exception as exc:
         st.exception(exc)
 
-elif page == "Sensory experiments":
-    st.title("Sensory experiments")
+elif page == "Sensing experiments":
+    st.title("Sensing experiments")
 
     architectures = api_get("/architectures")
     validated = validated_architectures_for(architectures, "sensory_buffer")
@@ -394,7 +394,7 @@ elif page == "Sensory experiments":
         delays_text = st.text_input("Delays ms", value="0,50,100,220,500,1000")
         delays_ms = [int(x.strip()) for x in delays_text.split(",") if x.strip()]
 
-        if st.button("Create sensory experiment job"):
+        if st.button("Create sensing experiment job"):
             payload = {
                 "architecture_id": arch["id"],
                 "benchmark": "sensory_buffer",
@@ -876,24 +876,24 @@ elif page == "Plots":
         os.getenv("PLOTS_DIR", "/data/plots")
     ).resolve()
 
-    st.caption(f"Diretório: `{plots_dir}`")
+    st.caption(f"Directory: `{plots_dir}`")
 
-    st.subheader("Gerar uma nova comparação")
+    st.subheader("Generate a new comparison")
     st.caption(
-        "Refazer cria uma nova geração de plots sem apagar as anteriores. "
-        "A comparação inclui o resultado válido mais recente de cada agente "
-        "já importado, incluindo agentes antigos e novos."
+        "Rebuild creates a new generation of plots without deleting previous ones. "
+        "The comparison includes the most recent valid result for each agent "
+        "already imported, including both existing and newly added agents."
     )
 
     replot_options = {
-        "Todos os benchmarks com resultados": "all",
-        "Sensorial": "sensory_buffer",
-        "Atencional (Posner)": "attention_posner",
-        "Motivacional": "motivation",
-        "Aprendizagem": "learning",
+        "All benchmarks with results": "all",
+        "Sensing": "sensory_buffer",
+        "Attention (Posner)": "attention_posner",
+        "Motivation": "motivation",
+        "Learning": "learning",
     }
     replot_label = st.selectbox(
-        "Benchmark para refazer",
+        "Benchmark to rebuild",
         list(replot_options),
         key="replot_benchmark",
     )
@@ -901,27 +901,27 @@ elif page == "Plots":
     action_col, refresh_col = st.columns([1, 1])
 
     with action_col:
-        if st.button("Refazer", type="primary", use_container_width=True):
+        if st.button("Rebuild", type="primary", use_container_width=True):
             try:
                 result = api_post_json(
                     "/plots/rebuild",
                     {"benchmark": replot_options[replot_label]},
                 )
                 st.session_state["last_replot_result"] = result
-                st.success(result.get("message", "Jobs de plots criados."))
+                st.success(result.get("message", "Plot jobs created."))
             except Exception as exc:
-                st.error("Não foi possível criar os novos jobs de plots.")
+                st.error("Could not create the new plot jobs.")
                 st.exception(exc)
 
     with refresh_col:
-        if st.button("Atualizar plots", use_container_width=True):
+        if st.button("Refresh plots", use_container_width=True):
             st.rerun()
 
     last_replot = st.session_state.get("last_replot_result")
     if last_replot:
         jobs_created = last_replot.get("jobs", [])
         if jobs_created:
-            st.markdown("**Últimos jobs criados**")
+            st.markdown("**Most recently created jobs**")
             st.dataframe(
                 pd.DataFrame(jobs_created),
                 use_container_width=True,
@@ -930,8 +930,8 @@ elif page == "Plots":
 
     if not plots_dir.exists():
         st.info(
-            "O diretório de plots ainda não existe. Use Refazer depois de "
-            "importar pelo menos um bundle de resultados."
+            "The plots directory does not exist yet. Use Rebuild after "
+            "importing at least one result bundle."
         )
         st.stop()
 
@@ -973,13 +973,13 @@ elif page == "Plots":
         }
     )
     plot_filter = st.selectbox(
-        "Filtrar plots exibidos",
-        ["Todos", *available_benchmarks],
+        "Filter displayed plots",
+        ["All", *available_benchmarks],
         key="plot_benchmark_filter",
     )
 
     def matches_plot_filter(path: Path) -> bool:
-        if plot_filter == "Todos":
+        if plot_filter == "All":
             return True
         relative = path.relative_to(plots_dir)
         return bool(relative.parts) and relative.parts[0] == plot_filter
@@ -988,14 +988,14 @@ elif page == "Plots":
     html_files = [path for path in all_html_files if matches_plot_filter(path)]
 
     if not plot_files and not html_files:
-        st.info("Nenhum plot encontrado para o filtro selecionado.")
+        st.info("No plots were found for the selected filter.")
         st.stop()
 
     if plot_files:
-        st.subheader("Imagens")
+        st.subheader("Images")
 
         selected_plot = st.selectbox(
-            "Selecione um plot",
+            "Select a plot",
             plot_files,
             format_func=lambda path: str(path.relative_to(plots_dir)),
         )
@@ -1008,13 +1008,13 @@ elif page == "Plots":
 
         with selected_plot.open("rb") as plot_file:
             st.download_button(
-                "Baixar plot",
+                "Download plot",
                 data=plot_file.read(),
                 file_name=selected_plot.name,
                 key=f"download-{selected_plot}",
             )
 
-        st.subheader("Galeria")
+        st.subheader("Gallery")
 
         columns = st.columns(2)
 
@@ -1031,10 +1031,10 @@ elif page == "Plots":
     if html_files:
         import streamlit.components.v1 as components
 
-        st.subheader("Plots HTML interativos")
+        st.subheader("Interactive HTML plots")
 
         selected_html = st.selectbox(
-            "Selecione um HTML",
+            "Select an HTML plot",
             html_files,
             format_func=lambda path: str(path.relative_to(plots_dir)),
             key="selected_html_plot",
@@ -1074,5 +1074,5 @@ elif page == "VNC":
     )
 
     st.markdown(
-        f"[Abrir noVNC em uma nova aba]({vnc_url})"
+        f"[Open noVNC in a new tab]({vnc_url})"
     )

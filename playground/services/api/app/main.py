@@ -366,10 +366,10 @@ def rebuild_comparison_plots(request: ReplotRequest) -> ReplotResponse:
         benchmarks = [request.benchmark] if request.benchmark in available else []
 
     if not benchmarks:
-        selected = "qualquer benchmark" if request.benchmark == "all" else request.benchmark
+        selected = "any benchmark" if request.benchmark == "all" else request.benchmark
         raise HTTPException(
             status_code=404,
-            detail=f"Nenhum resultado importado encontrado para {selected}.",
+            detail=f"No imported results were found for {selected}.",
         )
 
     created: list[dict[str, str]] = []
@@ -390,7 +390,7 @@ def rebuild_comparison_plots(request: ReplotRequest) -> ReplotResponse:
                 "run_id": reference_run_id,
                 "benchmark": benchmark,
                 "mode": "comparison_all_uploaded_agents",
-                "trigger": "plots_refazer_button",
+                "trigger": "plots_rebuild_button",
             },
         )
 
@@ -402,8 +402,8 @@ def rebuild_comparison_plots(request: ReplotRequest) -> ReplotResponse:
     return ReplotResponse(
         ok=True,
         message=(
-            "Novos jobs de comparação foram criados. "
-            "Cada job gera uma nova pasta de plots sem apagar as anteriores."
+            "New comparison jobs were created. "
+            "Each job creates a new plot directory without deleting previous ones."
         ),
         jobs=created,
     )

@@ -171,6 +171,18 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            UPDATE jobs
+            SET input_json = REPLACE(
+                input_json,
+                '"plots_refazer_button"',
+                '"plots_rebuild_button"'
+            )
+            WHERE input_json LIKE '%plots_refazer_button%'
+            """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
                 agent_name TEXT NOT NULL,
