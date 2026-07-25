@@ -1338,7 +1338,7 @@ create another generation manually:
 1. Open the Streamlit dashboard.
 2. Go to **Plots**.
 3. Select one benchmark or all benchmarks.
-4. Click **Refazer**.
+4. Click **Rebuild**.
 
 Each new job:
 
@@ -1350,7 +1350,8 @@ Each new job:
 - remaps legacy host paths such as `/home/.../playground/data/...` to the
   current Docker mount under `/data/...`;
 - writes its output to `data/plots/{benchmark}/comparison/{job_id}/`;
-- writes `generation.json` with the selected agents and run IDs.
+- writes `generation.json` with the selected agents, run IDs, generation time,
+  and plot-processing parameters.
 
 The same operation is available through the API:
 
@@ -1378,6 +1379,64 @@ Or inspect the temporary normalized input created for that job:
 ```bash
 tree data/jobs/{job_id}/plot_input -L 4
 ```
+
+### Interpreting plots in the dashboard
+
+The **Plots** page uses a scientific metadata catalog stored in:
+
+```text
+services/api/app/plot_catalog.yaml
+```
+
+The selected plot determines the information shown in the right-hand panel. The
+panel contains the following tabs:
+
+- **Experiment**: describes the task, experimental procedure, and expected
+  behavior;
+- **Measure**: defines the plotted measure, unit, preferred direction, range,
+  threshold, and formula when applicable;
+- **Variables**: explains axes, lines, conditions, shaded regions, bars, and
+  other visual encodings;
+- **Interpretation**: provides guidance for reading the result without replacing
+  the scientific analysis of the researcher;
+- **Processing**: reports normalization, interpolation, smoothing, aggregation,
+  and other plot-generation parameters;
+- **Provenance**: identifies the generation, job, agents, and run IDs used to
+  produce the plot.
+
+Plots are selected hierarchically by benchmark, generation, experiment, and
+measure. The complete image gallery is disabled by default and can be enabled for
+the current experiment. This avoids loading every image in benchmarks that
+generate many diagnostic plots.
+
+The API endpoint `GET /plots` returns the same metadata under the `metadata`
+field of each plot item. Static scientific definitions come from
+`plot_catalog.yaml`, while generation-specific provenance and processing values
+come from the nearest `generation.json`. Older plot directories without a
+`generation.json` remain visible; their metadata is inferred from the directory
+and filename, and the provenance source is marked accordingly.
+
+To add documentation for a new plot, add a regular-expression rule to the
+corresponding benchmark under `benchmarks.<benchmark>.plots` in the catalog. A
+rule may define:
+
+```yaml
+- pattern: 'example_metric'
+  title: Example metric
+  metric:
+    name: Example measure
+    unit: normalized score
+    direction: Higher is better
+    formula_latex: 'S=\frac{x}{n}'
+    description: Description of how the measure is calculated.
+  variables:
+    - label: Horizontal axis
+      description: Episode number.
+  interpretation: Guidance for comparing the curves.
+```
+
+The first matching rule is used. More specific patterns should therefore appear
+before broad fallback patterns.
 
 # Troubleshooting comparison plots
 

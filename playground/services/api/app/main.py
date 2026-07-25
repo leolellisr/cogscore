@@ -44,6 +44,7 @@ from .schemas import (
     RunExperimentResponse,
     UploadArchitectureResponse,
 )
+from .plot_metadata import build_plot_metadata
 
 from .services.storage import import_result_bundle
 app = FastAPI(
@@ -443,6 +444,7 @@ def list_plots() -> list[dict[str, Any]]:
                 "extension": path.suffix.lower(),
                 "size_bytes": stat.st_size,
                 "modified_at": stat.st_mtime,
+                "metadata": build_plot_metadata(path),
             }
         )
 

@@ -1,0 +1,943 @@
+schema_version: 1
+
+benchmarks:
+  sensory_buffer:
+    title: Sensing
+    description: >
+      The sensing benchmark evaluates the persistence and fidelity of a visual
+      representation after the original stimulus is no longer directly available.
+      A visual patch returned by the architecture after a configured delay is
+      compared with the corresponding patch in the original RGB image.
+    default_interpretation: >
+      Compare the initial value, the rate of change as delay increases, and the
+      uncertainty represented by error bars or distributions. Higher fidelity and
+      lower mean squared error indicate a more accurate retained representation.
+    experiments:
+      sperling:
+        title: Sperling-inspired visual-buffer experiment
+        procedure: >
+          The architecture receives a complete RGB frame and stores an internal
+          representation. After a configured delay, the benchmark provides a spatial
+          cue and requests the corresponding visual patch. The returned patch is
+          compared with the original pixels at the same location.
+        expected_behavior: >
+          The returned patch should remain similar to the original patch as the
+          delay increases. A slower loss of fidelity indicates longer visual-buffer
+          persistence.
+    plots:
+      - pattern: 'fidelity_by_delay_wsperling'
+        title: Visual fidelity by delay with human reference
+        experiment_id: sperling
+        metric:
+          name: Visual fidelity
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          formula_latex: 'F=\operatorname{clip}\left(1-\frac{\operatorname{MSE}}{255^2},0,1\right)'
+          description: >
+            Visual fidelity is a normalized transformation of pixel-level mean
+            squared error. A value of 1 represents an exact reconstruction of the
+            requested patch, while values closer to 0 represent larger reconstruction
+            errors.
+        variables:
+          - label: Horizontal axis
+            description: Delay between stimulus presentation and patch request, in milliseconds.
+          - label: Vertical axis
+            description: Mean normalized visual fidelity.
+          - label: Lines
+            description: Each line represents an evaluated agent or a reference profile.
+          - label: Error bars
+            description: Dispersion across repeated observations when available.
+        interpretation: >
+          Curves that remain higher for longer delays indicate greater persistence of
+          the stored visual representation. The human curve is a reference profile and
+          should not be interpreted as an uploaded empirical agent result.
+        data_type: Empirical agents with reference profile
+
+      - pattern: 'fidelity_by_delay_nsperling'
+        title: Visual fidelity by delay
+        experiment_id: sperling
+        metric:
+          name: Visual fidelity
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          formula_latex: 'F=\operatorname{clip}\left(1-\frac{\operatorname{MSE}}{255^2},0,1\right)'
+          description: >
+            Visual fidelity is calculated from the normalized pixel-level mean
+            squared error between the returned and original patches.
+        variables:
+          - label: Horizontal axis
+            description: Delay between stimulus presentation and patch request, in milliseconds.
+          - label: Vertical axis
+            description: Mean normalized visual fidelity.
+          - label: Lines
+            description: Each line represents one evaluated agent.
+        interpretation: >
+          Higher curves indicate more accurate visual retention. The curve shape
+          describes how rapidly the retained representation degrades with delay.
+        data_type: Empirical comparison
+
+      - pattern: 'mse_by_delay'
+        title: Visual patch error by delay
+        experiment_id: sperling
+        metric:
+          name: Mean squared error
+          unit: squared pixel intensity
+          direction: Lower is better
+          range: '[0, 65025] for 8-bit channels before clipping or scaling'
+          formula_latex: '\operatorname{MSE}=\frac{1}{N}\sum_{i=1}^{N}(\hat{x}_i-x_i)^2'
+          description: >
+            Mean squared error is calculated between the pixels returned by the
+            architecture and the original pixels in the requested visual patch.
+        variables:
+          - label: Horizontal axis
+            description: Delay between stimulus presentation and patch request, in milliseconds.
+          - label: Vertical axis
+            description: Mean squared pixel reconstruction error; some plots use a logarithmic scale.
+          - label: Lines
+            description: Each line represents one evaluated agent.
+        interpretation: >
+          Lower values indicate a more accurate reconstruction. A rising curve
+          indicates increasing representation error as the delay grows.
+        data_type: Empirical comparison
+
+      - pattern: 'fidelity_by_delay_boxplot'
+        title: Distribution of visual fidelity by delay
+        experiment_id: sperling
+        metric:
+          name: Visual fidelity
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          description: >
+            The box plot summarizes the distribution of visual-fidelity values for
+            each delay or agent condition.
+        variables:
+          - label: Boxes
+            description: Median and interquartile range of the observations.
+          - label: Whiskers and points
+            description: Dispersion and possible outlying observations, according to the plotting convention.
+        interpretation: >
+          Compare medians together with the width of the distributions. High median
+          fidelity with low dispersion indicates accurate and consistent retention.
+        data_type: Empirical distribution
+
+      - pattern: 'patch_error_heatmap'
+        title: Visual patch error heatmap
+        experiment_id: sperling
+        metric:
+          name: Spatial reconstruction error
+          unit: pixel error
+          direction: Lower is better
+          description: >
+            The heatmap displays the spatial distribution of reconstruction error
+            over the requested visual patch.
+        variables:
+          - label: Heatmap position
+            description: Pixel or patch position in the requested visual region.
+          - label: Color intensity
+            description: Magnitude of the reconstruction error at that position.
+        interpretation: >
+          Concentrated high-error regions indicate spatially localized failures,
+          while uniformly low values indicate consistent reconstruction.
+        data_type: Empirical diagnostic
+
+  attention_posner:
+    title: Attention
+    description: >
+      The attention benchmark evaluates orienting, cueing effects, visual search,
+      peripheral capture, crowding, and the quality of the internal attention map.
+      Results are organized into five Posner-inspired experiments.
+    default_interpretation: >
+      Interpretation depends on the selected measure. Lower reaction time and
+      attentional latency are generally better; higher fidelity and detection rate
+      are better; lower normalized entropy indicates a more concentrated attention
+      distribution. Cueing benefit and cost must be interpreted relative to zero.
+    experiments:
+      '0':
+        title: Java execution diagnostics
+        procedure: >
+          This diagnostic summarizes status or step information generated by the
+          Java execution layer. It is intended for implementation inspection rather
+          than cognitive-performance comparison.
+        expected_behavior: >
+          Status counts should be consistent with the expected number of executed
+          trials and completed processing cycles.
+      '1':
+        title: Experiment 1 — Central-cue Posner task
+        procedure: >
+          A central cue precedes a target that may appear at a valid, neutral, or
+          invalid location. The experiment measures endogenous orienting and the
+          behavioral effect of cue validity.
+        expected_behavior: >
+          Valid cues should reduce reaction time relative to neutral trials, while
+          invalid cues should increase reaction time.
+      '2':
+        title: Experiment 2 — Stimulus-onset-asynchrony sweep
+        procedure: >
+          The interval between cue and target presentation is varied. The experiment
+          evaluates the temporal development of attentional orienting and cueing
+          effects across stimulus-onset-asynchrony conditions.
+        expected_behavior: >
+          Benefit and cost may vary with the cue-target interval, revealing the time
+          required for attention to become aligned with the cued location.
+      '3':
+        title: Experiment 3 — Peripheral-cue orienting
+        procedure: >
+          A peripheral event is used to capture attention before target presentation.
+          The experiment evaluates stimulus-driven orienting, reaction time, and
+          spatial attention-map quality.
+        expected_behavior: >
+          Peripheral cues should produce measurable orienting effects and changes in
+          attentional latency depending on cue validity.
+      '4':
+        title: Experiment 4 — Posner task under visual search
+        procedure: >
+          The target is presented among distractors under feature-search and
+          conjunction-search conditions. The experiment measures how reaction time
+          and detection change with search type and distractor count.
+        expected_behavior: >
+          Efficient search is associated with a smaller increase in reaction time as
+          the number of distractors grows, while maintaining adequate detection.
+      '5':
+        title: Experiment 5 — Posner task under crowding
+        procedure: >
+          The target is presented with or without nearby flankers at controlled
+          distances. The experiment measures interference produced by crowding and
+          the extent to which attention reduces this interference.
+        expected_behavior: >
+          Flankers should increase reaction time or reduce performance, and an
+          effective attentional mechanism should reduce the crowding effect.
+    plots:
+      - pattern: 'reaction_time_development_by_episode'
+        title: Reaction-time development
+        metric:
+          name: Reaction time
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Reaction time is the number of cognitive cycles between target onset and
+            target detection or the response event defined by the experiment.
+        variables:
+          - label: Horizontal axis
+            description: Normalized episode index.
+          - label: Vertical axis
+            description: Mean reaction time in cognitive cycles.
+          - label: Lines
+            description: Agent and trial-type means, usually valid, neutral, and invalid conditions.
+        interpretation: >
+          Lower curves indicate faster target detection. Differences among valid,
+          neutral, and invalid conditions quantify the cueing effect.
+
+      - pattern: 'reaction_time_timeline_by_episode'
+        title: Reaction-time timeline
+        metric:
+          name: Reaction time
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Episode-level reaction time obtained from trial records and represented
+            after normalization and smoothing.
+        variables:
+          - label: Horizontal axis
+            description: Normalized episode index.
+          - label: Vertical axis
+            description: Reaction time in cognitive cycles.
+          - label: Lines
+            description: Each line represents an agent and, when applicable, a trial condition.
+        interpretation: >
+          A decreasing curve indicates faster responses during development. Isolated
+          changes should be interpreted together with detection rate.
+
+      - pattern: 'reaction_time_by_trial_type'
+        title: Reaction time by trial type
+        metric:
+          name: Reaction time
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Reaction time separated by experimental condition, such as valid,
+            neutral, invalid, flanked, or unflanked trials.
+        variables:
+          - label: Lines
+            description: Agent and trial-type combinations shown in the legend.
+          - label: Trial type
+            description: Experimental condition applied to the cue, target, or flankers.
+        interpretation: >
+          Compare conditions within the same agent before comparing agents. Cueing
+          effects are defined by differences among valid, neutral, and invalid trials.
+
+      - pattern: 'cueing_effects_development_by_episode'
+        title: Cueing-effect development
+        metric:
+          name: Cueing benefit, cost, and validity effect
+          unit: cognitive cycles
+          direction: Depends on component
+          formula_latex: '\operatorname{Benefit}=RT_{neutral}-RT_{valid},\quad\operatorname{Cost}=RT_{invalid}-RT_{neutral},\quad\operatorname{ValidityEffect}=RT_{invalid}-RT_{valid}'
+          description: >
+            Benefit measures facilitation produced by valid cues; cost measures the
+            penalty produced by invalid cues; validity effect compares invalid and
+            valid trials directly.
+        variables:
+          - label: Lines
+            description: Benefit, cost, and validity-effect series for each agent.
+          - label: Zero reference
+            description: Values near zero indicate little difference between the compared conditions.
+        interpretation: >
+          Positive benefit indicates faster valid than neutral trials. Positive cost
+          indicates slower invalid than neutral trials. Larger positive validity
+          effect indicates a stronger separation between valid and invalid trials.
+
+      - pattern: 'cued_uncued_rt_development_by_episode'
+        title: Cued and uncued reaction time
+        metric:
+          name: Reaction time
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Mean reaction time compared between cued and uncued trial groups.
+        variables:
+          - label: Lines
+            description: Cued and uncued reaction-time series for each agent.
+        interpretation: >
+          The difference between the two curves indicates the behavioral effect of
+          the cue. Interpret the direction according to how the experiment defines
+          the cued group.
+
+      - pattern: 'mean_fidelity_development_by_episode'
+        title: Mean attention-map fidelity
+        metric:
+          name: Spatial fidelity
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          description: >
+            Fidelity measures the spatial correspondence between the attention map
+            and the target location or reference map.
+        variables:
+          - label: Lines
+            description: Initial and final mean fidelity values for each agent.
+        interpretation: >
+          Higher final fidelity indicates that attention becomes more accurately
+          aligned with the target during the trial.
+
+      - pattern: 'initial_final_fidelity_timeline_by_episode'
+        title: Initial and final spatial fidelity
+        metric:
+          name: Spatial fidelity
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          description: >
+            Initial and final fidelity compare attention-map alignment before and
+            after the orienting interval of each trial.
+        variables:
+          - label: Lines
+            description: Initial and final fidelity series, separated by agent and condition when available.
+        interpretation: >
+          A final-fidelity curve above the initial-fidelity curve indicates improved
+          spatial alignment during the trial.
+
+      - pattern: 'final_fidelity_by_trial_type'
+        title: Final fidelity by trial type
+        metric:
+          name: Final spatial fidelity
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          description: >
+            Spatial correspondence between the final attention map and target,
+            separated by experimental trial type.
+        variables:
+          - label: Lines
+            description: Trial-type fidelity series for each agent.
+        interpretation: >
+          Higher values indicate more accurate final attention. Compare conditions to
+          identify whether invalid cues, search demands, or flankers reduce fidelity.
+
+      - pattern: 'attention_latency_development_by_episode'
+        title: Attentional-latency development
+        metric:
+          name: Attentional latency
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Number of cycles required for top-down orienting, bottom-up orienting, or
+            overt movement to reach the criterion used by the benchmark.
+        variables:
+          - label: Lines
+            description: Top-down, bottom-up, and eye-movement latency components for each agent.
+        interpretation: >
+          Lower latency indicates faster orienting. The components identify whether
+          delay originates in internal attention or overt movement.
+
+      - pattern: 'peak_value_development_by_episode'
+        title: Attention-map peak value
+        metric:
+          name: Peak value
+          unit: map activation
+          direction: Higher usually indicates a stronger selected location
+          description: >
+            Maximum activation present in the attention map for each observation.
+        variables:
+          - label: Lines
+            description: Peak activation for each agent and condition.
+        interpretation: >
+          Higher values may indicate a stronger attentional winner, but should be
+          interpreted together with fidelity and normalized entropy.
+
+      - pattern: 'map_variance_development_by_episode'
+        title: Attention-map variance
+        metric:
+          name: Map variance
+          unit: activation variance
+          direction: Context dependent
+          description: >
+            Statistical variance of activation values across the attention map.
+        variables:
+          - label: Lines
+            description: Map-variance series for each agent and condition.
+        interpretation: >
+          Variance alone does not determine map quality. Interpret it together with
+          peak value, entropy, and fidelity to distinguish concentration from noise.
+
+      - pattern: 'normalized_entropy_development_by_episode'
+        title: Normalized attention-map entropy
+        metric:
+          name: Normalized entropy
+          unit: normalized score
+          direction: Lower indicates a more concentrated distribution
+          range: '[0, 1]'
+          description: >
+            Entropy summarizes how distributed the attention-map activation is after
+            normalization.
+        variables:
+          - label: Lines
+            description: Normalized entropy for each agent and condition.
+        interpretation: >
+          Lower entropy indicates a more concentrated attention distribution. Very
+          low entropy is useful only when fidelity confirms concentration on the target.
+
+      - pattern: 'detection_rate_development_by_episode'
+        title: Detection-rate development
+        metric:
+          name: Detection rate
+          unit: percent of trials
+          direction: Higher is better
+          range: '[0, 100]'
+          description: >
+            Percentage of trials in which a valid detection cycle was recorded.
+        variables:
+          - label: Lines
+            description: Detection percentage for each agent and condition.
+        interpretation: >
+          Reaction-time improvements should be interpreted only when detection rate
+          remains adequate; low detection can make reaction-time averages misleading.
+
+      - pattern: 'soa_benefit_development_by_episode'
+        title: Cueing benefit by SOA
+        metric:
+          name: Cueing benefit
+          unit: cognitive cycles
+          direction: Larger positive values indicate stronger valid-cue facilitation
+          formula_latex: '\operatorname{Benefit}=RT_{neutral}-RT_{valid}'
+          description: >
+            Difference between neutral and valid reaction time for each cue-target
+            stimulus-onset-asynchrony condition.
+        variables:
+          - label: SOA
+            description: Delay between cue and target onset, in milliseconds.
+          - label: Lines
+            description: Agent and SOA combinations.
+        interpretation: >
+          Compare benefit across SOA values to identify when valid cues begin to
+          facilitate target detection.
+
+      - pattern: 'soa_cost_development_by_episode'
+        title: Cueing cost by SOA
+        metric:
+          name: Cueing cost
+          unit: cognitive cycles
+          direction: Larger positive values indicate a stronger invalid-cue penalty
+          formula_latex: '\operatorname{Cost}=RT_{invalid}-RT_{neutral}'
+          description: >
+            Difference between invalid and neutral reaction time for each cue-target
+            stimulus-onset-asynchrony condition.
+        variables:
+          - label: SOA
+            description: Delay between cue and target onset, in milliseconds.
+          - label: Lines
+            description: Agent and SOA combinations.
+        interpretation: >
+          Compare cost across SOA values to identify the temporal development of
+          reorienting after an invalid cue.
+
+      - pattern: 'visual_search_slopes_development_by_episode'
+        title: Visual-search slope
+        metric:
+          name: Search slope
+          unit: cognitive cycles per distractor
+          direction: Lower is better when detection remains adequate
+          formula_latex: '\operatorname{SearchSlope}=\frac{\Delta RT}{\Delta N_{distractors}}'
+          description: >
+            Change in reaction time associated with an increase in the number of
+            distractors, calculated separately for feature and conjunction search.
+        variables:
+          - label: Lines
+            description: Feature-search and conjunction-search slopes for each agent.
+        interpretation: >
+          Smaller positive slopes indicate more efficient search. Negative or unstable
+          slopes should be checked against detection rate and trial counts.
+
+      - pattern: 'visual_search_rt_by_condition'
+        title: Visual-search reaction time by condition
+        metric:
+          name: Reaction time
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Reaction time separated by feature or conjunction search and by the
+            number of distractors.
+        variables:
+          - label: Search type
+            description: Feature-search or conjunction-search condition.
+          - label: Distractor count
+            description: Number of distractors presented with the target.
+        interpretation: >
+          Increasing separation among distractor-count curves indicates a greater
+          search cost. Feature search is expected to have a smaller slope than
+          conjunction search.
+
+      - pattern: 'crowding_cost_development_by_episode'
+        title: Crowding cost
+        metric:
+          name: Crowding cost
+          unit: cognitive cycles or normalized difference
+          direction: Lower is better
+          description: >
+            Performance difference between flanked and unflanked target conditions.
+        variables:
+          - label: Flanker distance
+            description: Distance between target and surrounding flankers when represented in the legend.
+        interpretation: >
+          Larger positive values indicate greater interference from nearby flankers.
+
+      - pattern: 'attentional_reduction_crowding'
+        title: Attentional reduction of crowding
+        metric:
+          name: Attentional reduction of crowding
+          unit: normalized score or difference
+          direction: Higher positive values indicate greater reduction
+          description: >
+            Reduction of the crowding effect associated with attentional processing.
+        variables:
+          - label: Lines
+            description: Agent and flanker-distance conditions.
+        interpretation: >
+          Positive values indicate that attention reduces flanker interference.
+
+      - pattern: 'flanked_vs_unflanked_rt'
+        title: Flanked and unflanked reaction time
+        metric:
+          name: Reaction time
+          unit: cognitive cycles
+          direction: Lower is better
+          description: >
+            Reaction-time comparison between trials containing flankers and trials
+            without flankers.
+        variables:
+          - label: Lines
+            description: Flanked and unflanked conditions for each agent.
+        interpretation: >
+          The vertical difference between flanked and unflanked curves represents the
+          behavioral cost associated with crowding.
+
+      - pattern: 'java_step_status_count'
+        title: Java step-status diagnostic
+        metric:
+          name: Status count
+          unit: count
+          direction: Diagnostic
+          description: >
+            Number of Java execution records grouped by status or phase.
+        variables:
+          - label: Lines
+            description: Execution-status categories for each agent.
+        interpretation: >
+          Use this plot to inspect execution completeness and data availability, not
+          as a direct measure of cognitive performance.
+
+  motivation:
+    title: Motivation
+    description: >
+      The motivation benchmark evaluates persistence, drive- and curiosity-dependent
+      choice, goal substitution, latent learning, and adaptation after outcome
+      devaluation.
+    default_interpretation: >
+      Interpret each result according to the behavioral component represented in the
+      legend. Rates, probabilities, coverage, gain, sensitivity, and suppression are
+      generally better when higher. Perseveration and omission are better when lower.
+    experiments:
+      '1':
+        title: Experiment 1 — Persistence after stimulus removal
+        procedure: >
+          A stimulus initially elicits behavior and is then removed. The experiment
+          measures how long and how selectively the agent continues the associated
+          behavior without the original stimulus.
+        expected_behavior: >
+          Motivational regulation should produce measurable persistence without
+          indiscriminate repetition of unrelated actions.
+      '2':
+        title: Experiment 2 — Drive and curiosity modulation
+        procedure: >
+          Resource availability, deprivation, novelty, and control conditions are
+          manipulated to measure how internal conditions change object choice.
+        expected_behavior: >
+          Resource choice should increase under the corresponding drive condition,
+          while novelty choice should increase under curiosity-related conditions.
+      '3':
+        title: Experiment 3 — Goal substitution and detour behavior
+        procedure: >
+          The original goal is blocked or made unavailable. The agent must stop
+          repeating the ineffective response, select an alternative goal, or execute
+          a detour.
+        expected_behavior: >
+          Successful agents should increase substitution success and detour efficiency
+          while reducing perseveration.
+      '4':
+        title: Experiment 4 — Latent learning and delayed reward
+        procedure: >
+          The agent explores before the reward is introduced. Performance after reward
+          introduction is used to determine whether earlier unrewarded exploration
+          produced usable knowledge.
+        expected_behavior: >
+          Greater prior coverage and improved first-attempt performance after reward
+          introduction indicate latent learning.
+      '5':
+        title: Experiment 5 — Outcome devaluation
+        procedure: >
+          The value of a previously reinforced outcome is reduced. The experiment
+          measures whether the agent suppresses the associated response and adapts its
+          choice behavior.
+        expected_behavior: >
+          Higher devaluation sensitivity and response suppression indicate that action
+          selection depends on the current outcome value.
+    plots:
+      - pattern: 'all_experiments_behavioral_motivation_score'
+        title: Integrated behavioral motivation score
+        metric:
+          name: Behavioral motivation score
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          formula_latex: 'S_{mot}=\frac{1}{K}\left(\sum_{i\in P}m_i+\sum_{j\in N}(1-m_j)\right)'
+          description: >
+            Mean of the available positive components and the complements of negative
+            components. Negative components include perseveration and omission when
+            present. The set of components may vary with data availability.
+        variables:
+          - label: Lines
+            description: Agent and experiment combinations.
+          - label: Components
+            description: Available normalized positive metrics and complemented negative metrics.
+        interpretation: >
+          Higher scores indicate a more favorable behavioral profile. Comparisons are
+          valid only when the same component set is available for the compared results.
+
+      - pattern: 'exp1_persistence'
+        title: Persistence after stimulus removal
+        metric:
+          name: Persistence duration and selectivity
+          unit: cycles and normalized selectivity
+          direction: Context dependent
+          description: >
+            Persistence duration measures how long behavior continues after removal;
+            selectivity measures whether persistence remains directed toward the
+            relevant behavior.
+        variables:
+          - label: Lines
+            description: Duration and selectivity components for each agent.
+        interpretation: >
+          Persistence should be considered together with selectivity. Long persistence
+          with low selectivity may indicate indiscriminate repetition.
+
+      - pattern: 'exp2_deprivation_satiation_choice'
+        title: Drive modulation and object choice
+        metric:
+          name: Choice probability and modulation index
+          unit: normalized value
+          direction: Higher condition-appropriate values are better
+          range: '[0, 1] for probabilities and normalized indices'
+          description: >
+            Choice probabilities summarize selected object categories. Modulation
+            indices quantify the change associated with resource or novelty conditions.
+        variables:
+          - label: Lines
+            description: Resource, novelty, and control probabilities and their modulation indices.
+        interpretation: >
+          Compare condition-appropriate choices with the control probability. Positive
+          modulation indicates that the internal condition changes behavior in the
+          expected direction.
+
+      - pattern: 'exp3_goal_substitution_detour'
+        title: Goal substitution and detour behavior
+        metric:
+          name: Substitution success, perseveration, and detour efficiency
+          unit: normalized rate
+          direction: Higher success and efficiency; lower perseveration
+          range: '[0, 1]'
+          description: >
+            The measures summarize successful replacement of an unavailable goal,
+            repeated ineffective responses, and efficiency of the alternative route.
+        variables:
+          - label: Lines
+            description: Substitution success rate, mean perseveration, and mean detour efficiency.
+        interpretation: >
+          A favorable profile combines high substitution success and detour efficiency
+          with low perseveration.
+
+      - pattern: 'exp4_latent_learning'
+        title: Latent learning and delayed reward
+        metric:
+          name: Coverage, first-attempt performance, and latent-learning gain
+          unit: normalized rate
+          direction: Higher is better
+          range: '[0, 1]'
+          description: >
+            Measures include inspection and manipulation coverage before reward,
+            accuracy and efficiency of the first rewarded interaction, and the gain
+            attributed to previous exploration.
+        variables:
+          - label: Lines
+            description: Coverage, first-attempt accuracy, first-interaction efficiency, and latent-learning gain.
+        interpretation: >
+          Higher pre-reward coverage together with improved first-attempt performance
+          supports the presence of latent learning.
+
+      - pattern: 'exp5_outcome_devaluation'
+        title: Outcome devaluation
+        metric:
+          name: Devaluation sensitivity and response suppression
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          description: >
+            Sensitivity measures behavioral change after an outcome loses value;
+            suppression measures reduction of the previously reinforced response.
+        variables:
+          - label: Lines
+            description: Devaluation sensitivity and response-suppression series for each agent.
+        interpretation: >
+          Higher values indicate greater adaptation to the updated outcome value.
+
+      - pattern: 'action_profile'
+        title: Action profile
+        metric:
+          name: Mean action count
+          unit: count
+          direction: Descriptive
+          description: >
+            Mean number of motor, virtual, and attentional actions recorded during the
+            experiment.
+        variables:
+          - label: Lines
+            description: Motor, virtual, and attentional action categories for each agent.
+        interpretation: >
+          This plot describes how behavior is composed. It should be interpreted with
+          task-performance metrics because a larger action count is not necessarily better.
+
+      - pattern: 'action_composition'
+        title: Action composition by experiment
+        metric:
+          name: Mean action count
+          unit: count
+          direction: Descriptive
+          description: >
+            Bar chart comparing motor, virtual, and attentional action counts across
+            motivation experiments for one agent.
+        variables:
+          - label: Horizontal axis
+            description: Motivation experiment.
+          - label: Bars
+            description: Motor, virtual, and attentional action categories.
+        interpretation: >
+          Use the relative bar heights to identify changes in behavioral composition
+          across experiments.
+
+      - pattern: 'per_trial_derived_score'
+        title: Per-trial behavioral motivation score
+        metric:
+          name: Behavioral motivation score
+          unit: normalized score
+          direction: Higher is better
+          range: '[0, 1]'
+          formula_latex: 'S_{mot}=\frac{1}{K}\left(\sum_{i\in P}m_i+\sum_{j\in N}(1-m_j)\right)'
+          description: >
+            Score derived from trial-level records using the positive and negative
+            components available in each experiment.
+        variables:
+          - label: Lines
+            description: Score for each agent and experiment.
+        interpretation: >
+          Confirm that compared results use the same component set before interpreting
+          differences in score magnitude.
+
+      - pattern: 'java_step_diagnostics'
+        title: Java step diagnostics
+        metric:
+          name: Execution count
+          unit: count
+          direction: Diagnostic
+          description: >
+            Counts derived from Java step traces and simulator-response records.
+        variables:
+          - label: Lines
+            description: Trace action count and simulator-response count for each agent.
+        interpretation: >
+          Use this plot to inspect execution completeness and data flow rather than
+          motivational performance.
+
+  learning:
+    title: Learning
+    description: >
+      The learning benchmark evaluates the developmental acquisition of reactive
+      fixation, moving-object tracking, top-down tracking, object permanence, and
+      multiple-object tracking through alternating attention.
+    default_interpretation: >
+      Mean angular deviation is the magnitude of the yaw and pitch error between the
+      current visual orientation and the target direction. Lower values indicate
+      better alignment. Values below 30 degrees satisfy the field-of-view criterion.
+    experiments:
+      Te1:
+        title: Te1 — Reactive fixation of a stationary visible object
+        procedure: >
+          Marta observes a stationary visible target and learns to align its visual
+          orientation using the reactive fixation configuration.
+        expected_behavior: >
+          Angular deviation should remain below the 30-degree field-of-view threshold.
+      Te2:
+        title: Te2 — Curiosity-supported moving-object tracking
+        procedure: >
+          The target moves and may leave the current focus. The experiment evaluates
+          whether curiosity-supported exploration allows the agent to search for and
+          recover visual alignment.
+        expected_behavior: >
+          The agent should reduce angular deviation after target movement and maintain
+          the target within the field of view.
+      Te3:
+        title: Te3 — Top-down tracking in open space
+        procedure: >
+          The target moves through a broader open-space condition. Top-down color,
+          distance, and spatial feature maps are used to maintain goal-directed
+          selection.
+        expected_behavior: >
+          The agent should maintain target alignment when bottom-up salience and local
+          exploratory behavior are insufficient.
+      Te4:
+        title: Te4a — Object permanence under the first occlusion profile
+        procedure: >
+          The target becomes temporarily occluded. The agent must continue a
+          target-directed policy and recover alignment after the interruption of
+          visual information.
+        expected_behavior: >
+          Mean angular deviation should remain below 30 degrees despite temporary occlusion.
+      Te4a:
+        title: Te4a — Object permanence under the first occlusion profile
+        procedure: >
+          The target becomes temporarily occluded. The agent must continue a
+          target-directed policy and recover alignment after the interruption of
+          visual information.
+        expected_behavior: >
+          Mean angular deviation should remain below 30 degrees despite temporary occlusion.
+      Te4b:
+        title: Te4b — Object permanence under the second occlusion profile
+        procedure: >
+          A second occlusion condition evaluates whether the object-permanence
+          configuration remains effective under a different interruption profile.
+        expected_behavior: >
+          The target should remain within the field-of-view criterion after occlusion recovery.
+      Te5:
+        title: Te5 — Multiple-object tracking with alternating attention
+        procedure: >
+          More than one relevant target must be monitored. Alternating attention
+          replaces the single-winner policy and distributes selection across the
+          relevant objects.
+        expected_behavior: >
+          The agent should maintain a low angular deviation while alternating attention
+          among the relevant targets.
+    plots:
+      - pattern: 'by_experiment/.+_all_agents'
+        title: Angular deviation by agent
+        metric:
+          name: Mean angular deviation
+          unit: degrees
+          direction: Lower is better
+          range: '[0, +infinity)'
+          threshold: '< 30 degrees'
+          formula_latex: '\delta_t=\sqrt{\delta_{yaw,t}^2+\delta_{pitch,t}^2},\quad\bar{\delta}_e=\frac{1}{N_e}\sum_{t=1}^{N_e}\delta_t'
+          description: >
+            The yaw and pitch errors are combined into an angular-error magnitude at
+            each recorded step. The values are averaged within each episode and then
+            aggregated across available runs.
+        variables:
+          - label: Horizontal axis
+            description: Episode number.
+          - label: Vertical axis
+            description: Mean angular deviation in degrees.
+          - label: Lines
+            description: Each line represents one developmental agent in the selected experiment.
+          - label: Shaded region
+            description: Error magnitudes from 0 to 30 degrees, corresponding to the absolute field-of-view criterion [-30 degrees, +30 degrees].
+          - label: Dashed line
+            description: Field-of-view threshold at 30 degrees.
+        interpretation: >
+          A decreasing curve indicates improved target alignment. An agent that remains
+          below 30 degrees keeps the target, on average, within the field of view.
+        data_type: Empirical comparison by experiment
+
+      - pattern: 'by_agent/.+_all_experiments'
+        title: Angular deviation by experiment
+        experiment_id: developmental_profile
+        metric:
+          name: Mean angular deviation
+          unit: degrees
+          direction: Lower is better
+          range: '[0, +infinity)'
+          threshold: '< 30 degrees'
+          formula_latex: '\delta_t=\sqrt{\delta_{yaw,t}^2+\delta_{pitch,t}^2},\quad\bar{\delta}_e=\frac{1}{N_e}\sum_{t=1}^{N_e}\delta_t'
+          description: >
+            Angular-error magnitude averaged by episode and aggregated across
+            available runs.
+        variables:
+          - label: Horizontal axis
+            description: Episode number.
+          - label: Vertical axis
+            description: Mean angular deviation in degrees.
+          - label: Lines
+            description: Each line represents one experimental condition evaluated with the selected agent.
+          - label: Shaded region
+            description: Error magnitudes from 0 to 30 degrees, corresponding to the field-of-view criterion.
+        interpretation: >
+          This view identifies the conditions solved by one developmental configuration
+          and the condition in which its performance exceeds the field-of-view threshold.
+        data_type: Empirical developmental profile
+
+      - pattern: 'angles'
+        title: Legacy angular-deviation plot
+        metric:
+          name: Angular deviation
+          unit: degrees
+          direction: Lower is better
+          threshold: '< 30 degrees'
+          description: >
+            Legacy learning plot showing angular alignment error. Naming conventions
+            may not identify all aggregation and experimental details.
+        variables:
+          - label: Curves
+            description: Refer to the legend and source generation for the represented agent and condition.
+        interpretation: >
+          Values below 30 degrees satisfy the field-of-view criterion. Use the
+          provenance tab to verify the source run because this legacy filename contains
+          less metadata than current plots.
+        data_type: Legacy empirical plot

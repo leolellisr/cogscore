@@ -878,178 +878,406 @@ elif page == "Plots":
 
     st.caption(f"Directory: `{plots_dir}`")
 
-    st.subheader("Generate a new comparison")
-    st.caption(
-        "Rebuild creates a new generation of plots without deleting previous ones. "
-        "The comparison includes the most recent valid result for each agent "
-        "already imported, including both existing and newly added agents."
-    )
-
-    replot_options = {
-        "All benchmarks with results": "all",
-        "Sensing": "sensory_buffer",
-        "Attention (Posner)": "attention_posner",
-        "Motivation": "motivation",
-        "Learning": "learning",
-    }
-    replot_label = st.selectbox(
-        "Benchmark to rebuild",
-        list(replot_options),
-        key="replot_benchmark",
-    )
-
-    action_col, refresh_col = st.columns([1, 1])
-
-    with action_col:
-        if st.button("Rebuild", type="primary", use_container_width=True):
-            try:
-                result = api_post_json(
-                    "/plots/rebuild",
-                    {"benchmark": replot_options[replot_label]},
-                )
-                st.session_state["last_replot_result"] = result
-                st.success(result.get("message", "Plot jobs created."))
-            except Exception as exc:
-                st.error("Could not create the new plot jobs.")
-                st.exception(exc)
-
-    with refresh_col:
-        if st.button("Refresh plots", use_container_width=True):
-            st.rerun()
-
-    last_replot = st.session_state.get("last_replot_result")
-    if last_replot:
-        jobs_created = last_replot.get("jobs", [])
-        if jobs_created:
-            st.markdown("**Most recently created jobs**")
-            st.dataframe(
-                pd.DataFrame(jobs_created),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    if not plots_dir.exists():
-        st.info(
-            "The plots directory does not exist yet. Use Rebuild after "
-            "importing at least one result bundle."
+    def render_rebuild_controls() -> None:
+        st.divider()
+        st.subheader("Generate a new comparison")
+        st.caption(
+            "Rebuild creates a new generation of plots without deleting previous ones. "
+            "The comparison includes the most recent valid result for each agent "
+            "already imported, including both existing and newly added agents."
         )
+
+        replot_options = {
+            "All benchmarks with results": "all",
+            "Sensing": "sensory_buffer",
+            "Attention (Posner)": "attention_posner",
+            "Motivation": "motivation",
+            "Learning": "learning",
+        }
+        replot_label = st.selectbox(
+            "Benchmark to rebuild",
+            list(replot_options),
+            key="replot_benchmark",
+        )
+
+        action_col, refresh_col = st.columns([1, 1])
+
+        with action_col:
+            if st.button("Rebuild", type="primary", use_container_width=True):
+                try:
+                    result = api_post_json(
+                        "/plots/rebuild",
+                        {"benchmark": replot_options[replot_label]},
+                    )
+                    st.session_state["last_replot_result"] = result
+                    st.success(result.get("message", "Plot jobs created."))
+                except Exception as exc:
+                    st.error("Could not create the new plot jobs.")
+                    st.exception(exc)
+
+        with refresh_col:
+            if st.button("Refresh plots", use_container_width=True):
+                st.rerun()
+
+        last_replot = st.session_state.get("last_replot_result")
+        if last_replot:
+            jobs_created = last_replot.get("jobs", [])
+            if jobs_created:
+                st.markdown("**Most recently created jobs**")
+                st.dataframe(
+                    pd.DataFrame(jobs_created),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+    try:
+        plot_items = api_get("/plots")
+    except Exception as exc:
+        st.error("Could not load plot metadata from the API.")
+        st.exception(exc)
         st.stop()
 
-    supported_extensions = {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".webp",
-        ".gif",
-        ".svg",
+    if not plot_items:
+        st.info(
+            "No plots were found. Use Rebuild after importing at least one result bundle."
+        )
+        render_rebuild_controls()
+        st.stop()
+
+    image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+    image_items = [
+        item
+        for item in plot_items
+        if str(item.get("extension", "")).lower() in image_extensions
+    ]
+    html_items = [
+        item
+        for item in plot_items
+        if str(item.get("extension", "")).lower() == ".html"
+    ]
+
+    def item_metadata(item: dict[str, Any]) -> dict[str, Any]:
+        metadata = item.get("metadata")
+        return metadata if isinstance(metadata, dict) else {}
+
+    def benchmark_id(item: dict[str, Any]) -> str:
+        metadata = item_metadata(item)
+        benchmark = metadata.get("benchmark", {})
+        if isinstance(benchmark, dict) and benchmark.get("id"):
+            return str(benchmark["id"])
+        relative = str(item.get("relative_path", ""))
+        return relative.split("/", 1)[0] if relative else "unknown"
+
+    def benchmark_title(item: dict[str, Any]) -> str:
+        metadata = item_metadata(item)
+        benchmark = metadata.get("benchmark", {})
+        if isinstance(benchmark, dict) and benchmark.get("title"):
+            return str(benchmark["title"])
+        return benchmark_id(item).replace("_", " ").title()
+
+    def generation_id(item: dict[str, Any]) -> str:
+        provenance = item_metadata(item).get("provenance", {})
+        if isinstance(provenance, dict) and provenance.get("generation_id"):
+            return str(provenance["generation_id"])
+        relative = str(item.get("relative_path", ""))
+        parts = relative.split("/")
+        return parts[2] if len(parts) >= 3 else parts[1] if len(parts) >= 2 else "legacy"
+
+    def generation_label(item: dict[str, Any]) -> str:
+        metadata = item_metadata(item)
+        provenance = metadata.get("provenance", {})
+        generation = generation_id(item)
+        scope = provenance.get("scope", "") if isinstance(provenance, dict) else ""
+        generated_at = provenance.get("generated_at", "") if isinstance(provenance, dict) else ""
+        suffix = ""
+        if generated_at:
+            suffix = f" — {generated_at}"
+        elif item.get("modified_at"):
+            try:
+                suffix = " — " + pd.to_datetime(
+                    item["modified_at"], unit="s"
+                ).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                suffix = ""
+        scope_text = f" ({scope})" if scope else ""
+        return f"{generation}{scope_text}{suffix}"
+
+    def experiment_key(item: dict[str, Any]) -> str:
+        experiment = item_metadata(item).get("experiment", {})
+        if isinstance(experiment, dict):
+            return str(experiment.get("id") or experiment.get("title") or "unspecified")
+        return "unspecified"
+
+    def experiment_title(item: dict[str, Any]) -> str:
+        experiment = item_metadata(item).get("experiment", {})
+        if isinstance(experiment, dict) and experiment.get("title"):
+            return str(experiment["title"])
+        return "Multiple or unspecified experimental conditions"
+
+    def plot_title(item: dict[str, Any]) -> str:
+        plot = item_metadata(item).get("plot", {})
+        if isinstance(plot, dict) and plot.get("title"):
+            return str(plot["title"])
+        return str(item.get("name", "Plot"))
+
+    st.divider()
+    st.subheader("Explore generated results")
+    st.caption(
+        "The experiment, measure, variables, processing parameters, and provenance "
+        "below change with the selected result."
+    )
+
+    available_benchmark_ids = sorted(
+        {benchmark_id(item) for item in [*image_items, *html_items]}
+    )
+    benchmark_examples = {
+        value: next(
+            item
+            for item in [*image_items, *html_items]
+            if benchmark_id(item) == value
+        )
+        for value in available_benchmark_ids
     }
 
-    all_plot_files = sorted(
-        [
-            path
-            for path in plots_dir.rglob("*")
-            if path.is_file()
-            and path.suffix.lower() in supported_extensions
-        ],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-
-    all_html_files = sorted(
-        [
-            path
-            for path in plots_dir.rglob("*.html")
-            if path.is_file()
-        ],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-
-    available_benchmarks = sorted(
-        {
-            path.relative_to(plots_dir).parts[0]
-            for path in [*all_plot_files, *all_html_files]
-            if path.relative_to(plots_dir).parts
-        }
-    )
-    plot_filter = st.selectbox(
-        "Filter displayed plots",
-        ["All", *available_benchmarks],
+    selected_benchmark = st.selectbox(
+        "Benchmark",
+        available_benchmark_ids,
+        format_func=lambda value: benchmark_title(benchmark_examples[value]),
         key="plot_benchmark_filter",
     )
 
-    def matches_plot_filter(path: Path) -> bool:
-        if plot_filter == "All":
-            return True
-        relative = path.relative_to(plots_dir)
-        return bool(relative.parts) and relative.parts[0] == plot_filter
+    benchmark_images = [
+        item for item in image_items if benchmark_id(item) == selected_benchmark
+    ]
+    benchmark_html = [
+        item for item in html_items if benchmark_id(item) == selected_benchmark
+    ]
 
-    plot_files = [path for path in all_plot_files if matches_plot_filter(path)]
-    html_files = [path for path in all_html_files if matches_plot_filter(path)]
+    generation_examples: dict[str, dict[str, Any]] = {}
+    for item in [*benchmark_images, *benchmark_html]:
+        generation_examples.setdefault(generation_id(item), item)
 
-    if not plot_files and not html_files:
-        st.info("No plots were found for the selected filter.")
-        st.stop()
+    generation_options = sorted(
+        generation_examples,
+        key=lambda value: float(generation_examples[value].get("modified_at", 0)),
+        reverse=True,
+    )
+    selected_generation = st.selectbox(
+        "Generation",
+        generation_options,
+        format_func=lambda value: generation_label(generation_examples[value]),
+        key="plot_generation_filter",
+    )
 
-    if plot_files:
-        st.subheader("Images")
+    generation_images = [
+        item for item in benchmark_images if generation_id(item) == selected_generation
+    ]
+    generation_html = [
+        item for item in benchmark_html if generation_id(item) == selected_generation
+    ]
 
-        selected_plot = st.selectbox(
-            "Select a plot",
-            plot_files,
-            format_func=lambda path: str(path.relative_to(plots_dir)),
+    if generation_images:
+        experiment_examples: dict[str, dict[str, Any]] = {}
+        for item in generation_images:
+            experiment_examples.setdefault(experiment_key(item), item)
+
+        experiment_options = sorted(
+            experiment_examples,
+            key=lambda value: experiment_title(experiment_examples[value]),
+        )
+        selected_experiment = st.selectbox(
+            "Experiment",
+            experiment_options,
+            format_func=lambda value: experiment_title(experiment_examples[value]),
+            key="plot_experiment_filter",
         )
 
-        st.image(
-            str(selected_plot),
-            caption=str(selected_plot.relative_to(plots_dir)),
-            use_container_width=True,
+        experiment_images = [
+            item
+            for item in generation_images
+            if experiment_key(item) == selected_experiment
+        ]
+        plot_by_path = {
+            str(item.get("relative_path")): item for item in experiment_images
+        }
+        selected_relative_path = st.selectbox(
+            "Plot or measure",
+            list(plot_by_path),
+            format_func=lambda value: plot_title(plot_by_path[value]),
+            key="selected_plot",
         )
+        selected_item = plot_by_path[selected_relative_path]
+        selected_metadata = item_metadata(selected_item)
+        selected_plot_path = resolve_data_path(str(selected_item.get("path", "")))
 
-        with selected_plot.open("rb") as plot_file:
-            st.download_button(
-                "Download plot",
-                data=plot_file.read(),
-                file_name=selected_plot.name,
-                key=f"download-{selected_plot}",
-            )
+        plot_column, information_column = st.columns([2, 1], gap="large")
 
-        st.subheader("Gallery")
-
-        columns = st.columns(2)
-
-        for index, plot_path in enumerate(plot_files):
-            with columns[index % 2]:
-                st.markdown(
-                    f"**{plot_path.relative_to(plots_dir)}**"
-                )
+        with plot_column:
+            st.subheader(plot_title(selected_item))
+            if selected_plot_path.is_file():
                 st.image(
-                    str(plot_path),
+                    str(selected_plot_path),
+                    caption=str(selected_item.get("relative_path", "")),
                     use_container_width=True,
                 )
+                with selected_plot_path.open("rb") as plot_file:
+                    st.download_button(
+                        "Download plot",
+                        data=plot_file.read(),
+                        file_name=selected_plot_path.name,
+                        key=f"download-{selected_relative_path}",
+                    )
+            else:
+                st.error(f"Plot file is not available at `{selected_plot_path}`.")
 
-    if html_files:
+        with information_column:
+            metric = selected_metadata.get("metric", {})
+            plot_info = selected_metadata.get("plot", {})
+            metric = metric if isinstance(metric, dict) else {}
+            plot_info = plot_info if isinstance(plot_info, dict) else {}
+
+            quick_columns = st.columns(2)
+            quick_columns[0].metric("Unit", str(metric.get("unit") or "Not specified"))
+            quick_columns[1].metric(
+                "Preferred direction",
+                str(metric.get("direction") or "Not specified"),
+            )
+            st.metric(
+                "Success threshold",
+                str(metric.get("threshold") or "Not specified"),
+            )
+
+            (
+                experiment_tab,
+                measure_tab,
+                variables_tab,
+                interpretation_tab,
+                processing_tab,
+                provenance_tab,
+            ) = st.tabs(
+                [
+                    "Experiment",
+                    "Measure",
+                    "Variables",
+                    "Interpretation",
+                    "Processing",
+                    "Provenance",
+                ]
+            )
+
+            with experiment_tab:
+                benchmark = selected_metadata.get("benchmark", {})
+                experiment = selected_metadata.get("experiment", {})
+                benchmark = benchmark if isinstance(benchmark, dict) else {}
+                experiment = experiment if isinstance(experiment, dict) else {}
+
+                if benchmark.get("description"):
+                    st.markdown(str(benchmark["description"]))
+                st.markdown(f"**{experiment.get('title', 'Experiment')}**")
+                st.markdown(str(experiment.get("procedure") or "No procedure description is available."))
+                st.markdown("**Expected behavior**")
+                st.markdown(
+                    str(
+                        experiment.get("expected_behavior")
+                        or "No expected-behavior description is available."
+                    )
+                )
+
+            with measure_tab:
+                st.markdown(f"**{metric.get('name', 'Measure')}**")
+                st.markdown(
+                    str(metric.get("description") or "No measure description is available.")
+                )
+                formula = str(metric.get("formula_latex") or "").strip()
+                if formula:
+                    st.latex(formula)
+                if metric.get("range"):
+                    st.markdown(f"**Range:** `{metric['range']}`")
+
+            with variables_tab:
+                variables = selected_metadata.get("variables", [])
+                if isinstance(variables, list) and variables:
+                    for variable in variables:
+                        if not isinstance(variable, dict):
+                            continue
+                        st.markdown(
+                            f"**{variable.get('label', 'Variable')}** — "
+                            f"{variable.get('description', '')}"
+                        )
+                else:
+                    st.info("No variable description is available for this plot.")
+
+            with interpretation_tab:
+                st.markdown(
+                    str(
+                        selected_metadata.get("interpretation")
+                        or "No interpretation guidance is available for this plot."
+                    )
+                )
+
+            with processing_tab:
+                processing = selected_metadata.get("processing", {})
+                if isinstance(processing, dict) and processing:
+                    st.json(processing)
+                else:
+                    st.info("No processing metadata is available for this generation.")
+
+            with provenance_tab:
+                provenance = selected_metadata.get("provenance", {})
+                if isinstance(provenance, dict) and provenance:
+                    st.json(provenance)
+                else:
+                    st.info("No provenance metadata is available for this generation.")
+
+        show_gallery = st.checkbox(
+            "Show all images in this experiment",
+            value=False,
+            key="show_plot_gallery",
+        )
+        if show_gallery:
+            st.subheader("Gallery")
+            columns = st.columns(2)
+            for index, item in enumerate(experiment_images):
+                gallery_path = resolve_data_path(str(item.get("path", "")))
+                if not gallery_path.is_file():
+                    continue
+                with columns[index % 2]:
+                    st.markdown(f"**{plot_title(item)}**")
+                    st.caption(str(item.get("relative_path", "")))
+                    st.image(str(gallery_path), use_container_width=True)
+    elif not generation_html:
+        st.info("No image plots were found for the selected generation.")
+
+    if generation_html:
         import streamlit.components.v1 as components
 
         st.subheader("Interactive HTML plots")
-
-        selected_html = st.selectbox(
+        html_by_path = {
+            str(item.get("relative_path")): item for item in generation_html
+        }
+        selected_html_relative = st.selectbox(
             "Select an HTML plot",
-            html_files,
-            format_func=lambda path: str(path.relative_to(plots_dir)),
+            list(html_by_path),
+            format_func=lambda value: plot_title(html_by_path[value]),
             key="selected_html_plot",
         )
+        selected_html_item = html_by_path[selected_html_relative]
+        selected_html_path = resolve_data_path(str(selected_html_item.get("path", "")))
 
-        html_content = selected_html.read_text(
-            encoding="utf-8",
-            errors="replace",
-        )
+        if selected_html_path.is_file():
+            html_content = selected_html_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+            components.html(
+                html_content,
+                height=800,
+                scrolling=True,
+            )
+        else:
+            st.error(f"HTML plot is not available at `{selected_html_path}`.")
 
-        components.html(
-            html_content,
-            height=800,
-            scrolling=True,
-        )
+    render_rebuild_controls()
 
 
 elif page == "VNC":

@@ -263,7 +263,7 @@ def finish_plot(
         color="gray",
         alpha=0.16,
         zorder=0,
-        label="FOV (-30° a +30°)",
+        label="FOV [-30°, +30°]",
     )
 
     ax.axhline(
@@ -326,7 +326,7 @@ def plot_by_agent(dataset: dict[str, dict[str, dict[str, object]]], out: Path, s
         fig, ax = plt.subplots(figsize=(11, 6))
         count = 0
         for experiment, series in sorted(experiments.items()):
-            draw_curve(ax, series, f"{experiment} (n={series['run_count']})")
+            draw_curve(ax, series, f"{experiment}")
             count += 1
         if count == 0:
             plt.close(fig)

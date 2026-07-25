@@ -45,6 +45,13 @@ services:
       - COGSCORE_SIM_SERVICE=${COGSCORE_SIM_SERVICE:-sim-vnc}
       - PLOTS_DIR=/data/plots
       - PLOT_TIMEOUT_SECONDS=${PLOT_TIMEOUT_SECONDS:-1800}
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - MPLCONFIGDIR=/tmp/matplotlib
+      - HOME=/tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
     volumes:
       - ./data:/data
       - ./services/api:/api_src:ro
@@ -52,6 +59,17 @@ services:
       - ./scripts:/workspace/scripts:ro
       - ./tools:/workspace/tools:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -I
+        - -c
+        - "import encodings, pandas, matplotlib; print(encodings.__file__)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
       api:
         condition: service_healthy

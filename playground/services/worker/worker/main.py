@@ -1722,8 +1722,33 @@ def handle_replot(
         for run in selected_runs
     ]
 
+    x_points = max(2, int(input_data.get("x_points", 50)))
+    smooth_window = max(1, int(input_data.get("smooth_window", 7)))
+    impute_lookback = max(1, int(input_data.get("impute_lookback", 5)))
+    max_episodes = max(0, int(input_data.get("max_episodes", 50)))
+
+    plot_parameters: dict[str, Any] = {
+        "smooth_window": smooth_window,
+    }
+    if benchmark == "learning":
+        plot_parameters.update(
+            {
+                "max_episodes": max_episodes,
+                "aggregation": "mean and standard deviation across available runs",
+            }
+        )
+    else:
+        plot_parameters.update(
+            {
+                "x_points": x_points,
+                "impute_lookback": impute_lookback,
+                "interpolation": "linear with previous-mean fallback",
+            }
+        )
+
     metadata = {
         "job_id": job_id,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "reference_run_id": run_id,
         "benchmark": benchmark,
         "mode": mode,
@@ -1731,6 +1756,11 @@ def handle_replot(
         "selected_agents": selected_agents,
         "selected_run_ids": selected_run_ids,
         "generated_plots": generated,
+        "generated_plot_relative_paths": [
+            str(Path(path).relative_to(output_dir))
+            for path in generated
+        ],
+        "plot_parameters": plot_parameters,
     }
     (output_dir / "generation.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),
