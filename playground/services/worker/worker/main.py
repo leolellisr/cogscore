@@ -1770,6 +1770,89 @@ def handle_replot(
     return metadata
 
 
+
+
+def write_worker_heartbeat() -> None:
+    heartbeat_path = STORAGE_ROOT / "worker-heartbeat.json"
+    payload = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+    }
+    temporary = heartbeat_path.with_suffix(".tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary.replace(heartbeat_path)
+    except OSError as exc:
+        info(f"Could not write worker heartbeat: {exc}")
+
+
+def handle_simulator_control(job: dict[str, Any], job_dir: Path) -> dict[str, Any]:
+    input_data = read_json(job.get("input_json"))
+    action = str(input_data.get("action") or "").strip().lower()
+    scene = str(input_data.get("scene") or "sperling.ttt").strip()
+    if action not in {"start", "stop", "restart"}:
+        raise ValueError(f"Unsupported simulator action: {action}")
+
+    scene_path = Path("/workspace/scenes") / scene
+    if scene_path.is_absolute() and not str(scene_path).startswith("/workspace/scenes/"):
+        raise ValueError("Simulator scene must be inside /workspace/scenes")
+    if ".." in Path(scene).parts:
+        raise ValueError("Simulator scene cannot contain parent-directory components")
+
+    container_name = resolve_simulator_container()
+    stdout_path = job_dir / "stdout.log"
+    stderr_path = job_dir / "stderr.log"
+
+    if action in {"stop", "restart"}:
+        completed = run_command(
+            ["docker", "exec", container_name, "cogscore-stop-coppelia"],
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timeout=60,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                command_failure_message(
+                    "Stopping CoppeliaSim",
+                    completed,
+                    stderr_path,
+                )
+            )
+
+    if action in {"start", "restart"}:
+        completed = run_command(
+            [
+                "docker",
+                "exec",
+                container_name,
+                "cogscore-open-coppelia",
+                str(scene_path),
+                "/data/coppelia/manual-control.log",
+            ],
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timeout=90,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                command_failure_message(
+                    "Starting CoppeliaSim",
+                    completed,
+                    stderr_path,
+                )
+            )
+
+    return {
+        "action": action,
+        "scene": scene,
+        "simulator_container": container_name,
+    }
+
+
 def process_job(job: dict[str, Any]) -> None:
     job_id = str(job["id"])
     job_type = str(job["job_type"])
@@ -1798,7 +1881,9 @@ def process_job(job: dict[str, Any]) -> None:
         elif job_type == "run_learning_remote":
             result = handle_run_learning_remote(job, job_dir)  
         elif job_type == "replot":
-            result = handle_replot(job, job_dir)                 
+            result = handle_replot(job, job_dir)
+        elif job_type == "simulator_control":
+            result = handle_simulator_control(job, job_dir)
         else:
             raise RuntimeError(f"Unknown job type: {job_type}")
 
@@ -1858,12 +1943,14 @@ def main() -> int:
     info("CogScore online worker started")
 
     while True:
+        write_worker_heartbeat()
         job = get_next_pending_job()
         if job is None:
             time.sleep(2)
             continue
 
         process_job(job)
+        write_worker_heartbeat()
 
 
 if __name__ == "__main__":

@@ -527,6 +527,25 @@ def list_experiment_runs() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+
+
+def get_experiment_run(run_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM experiment_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+    return row_to_dict(row)
+
+
+def get_run(run_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+    return row_to_dict(row)
+
 def update_experiment_run_status(
     *,
     run_id: str,

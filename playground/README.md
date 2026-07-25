@@ -1480,3 +1480,67 @@ corresponding dynamic architecture container is removed by the same startup
 cleanup. Create a new experiment or click **Refazer** again to start a fresh job.
 
 
+
+## Dashboard UX and online operation
+
+The dashboard is organized by researcher workflow:
+
+- **Dashboard**: service status, operational counts, recent jobs, and quick actions;
+- **Architectures**: architecture upload, ZIP preflight, validation state, manifest, and execution shortcut;
+- **Imported results**: result-bundle upload, manifest preview, imported-run inventory, and plot-job tracking;
+- **New experiment**: unified experiment wizard for sensing, attention, motivation, and learning;
+- **Experiment runs**: filters, parameters, repeat, edit-and-run, job navigation, and plot navigation;
+- **Plots**: contextual experiment and metric descriptions, processing metadata, provenance, generation comparison, and shareable query parameters;
+- **Jobs**: operational filters, duration, readable errors, logs, and retry for non-experiment jobs;
+- **Simulator**: noVNC view plus asynchronous start, stop, and restart controls;
+- **Documentation**: bundle and execution reference.
+
+Copy `.env.example` to `.env` before deployment. Direct development ports bind to `127.0.0.1` by default; the reverse proxy remains available on port `8080`. Set `COGSCORE_BIND_ADDRESS=0.0.0.0` only when direct exposure is intentional.
+
+An optional dashboard password can be enabled with:
+
+```text
+COGSCORE_DASHBOARD_USERNAME=researcher
+COGSCORE_DASHBOARD_PASSWORD=change-me
+```
+
+This application-level password protects the Streamlit dashboard only. A public or multi-user deployment should also use the reverse proxy authentication example in `deploy/Caddyfile.authenticated.example`, institutional identity management, per-user storage, and execution quotas. The patch does not claim to provide complete multi-tenant isolation.
+
+### Rebuilding after the dashboard update
+
+```bash
+cd playground
+docker compose up -d --build --force-recreate api worker web sim-vnc proxy
+```
+
+
+## Temporary public link without a domain or password
+
+The playground can be published temporarily from the local computer through a
+Cloudflare Quick Tunnel. This configuration does not require a domain, router
+port forwarding, a Cloudflare account, or an access password.
+
+Start the public link from the `playground` directory:
+
+```bash
+./tools/start-public-link.sh
+```
+
+The command prints an HTTPS address similar to:
+
+```text
+https://random-words.trycloudflare.com
+```
+
+Anyone who has this address can access the dashboard, API, architecture upload,
+result upload, plots, jobs, and the noVNC interface. Do not use this mode when
+private or sensitive data is stored in the playground.
+
+Stop only the public tunnel with:
+
+```bash
+./tools/stop-public-link.sh
+```
+
+The local services remain available after the tunnel is stopped. The temporary
+address may change whenever the tunnel container is recreated.

@@ -232,3 +232,29 @@ class UploadResultsResponse(BaseModel):
     run: dict
     job: dict
     warnings: list[str] = Field(default_factory=list)
+
+
+class RetryJobResponse(BaseModel):
+    ok: bool
+    source_job_id: str
+    job_id: str
+    message: str
+
+
+class RetryExperimentRunResponse(BaseModel):
+    ok: bool
+    source_run_id: str
+    run_id: str
+    job_id: str
+    message: str
+
+
+class SimulatorControlRequest(BaseModel):
+    action: Literal["start", "stop", "restart"]
+    scene: str | None = None
+
+
+class SimulatorControlResponse(BaseModel):
+    ok: bool
+    job_id: str
+    message: str

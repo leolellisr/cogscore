@@ -1,0 +1,18 @@
+services:
+  proxy:
+    volumes:
+      - ./deploy/Caddyfile.public:/etc/caddy/Caddyfile:ro
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cogscore-public-tunnel
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --url
+      - http://proxy:80
+    depends_on:
+      - proxy
+    networks:
+      - cogscore_online_net

@@ -53,6 +53,9 @@ COGSCORE_DOCKER_NETWORK = os.getenv("COGSCORE_DOCKER_NETWORK", "cogscore_online_
 MAX_ARCH_CPU = os.getenv("MAX_ARCH_CPU", "2")
 MAX_ARCH_MEMORY = os.getenv("MAX_ARCH_MEMORY", "4g")
 ARCH_TIMEOUT_SECONDS = int(os.getenv("ARCH_TIMEOUT_SECONDS", "120"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+SIM_VNC_INTERNAL_URL = os.getenv("SIM_VNC_INTERNAL_URL", "http://sim-vnc:6080/vnc.html")
+WORKER_HEARTBEAT_PATH = STORAGE_ROOT / "worker-heartbeat.json"
 
 
 def ensure_storage_dirs() -> None:

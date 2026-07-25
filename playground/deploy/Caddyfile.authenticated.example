@@ -1,0 +1,23 @@
+# Generate a password hash with:
+# docker run --rm caddy:2 caddy hash-password --plaintext 'change-me'
+# Then replace the hash below and use this file instead of deploy/Caddyfile.
+
+:80 {
+    encode gzip
+
+    basic_auth {
+        researcher $2a$14$REPLACE_WITH_A_CADDY_BCRYPT_HASH
+    }
+
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle_path /vnc/* {
+        reverse_proxy sim-vnc:6080
+    }
+
+    handle {
+        reverse_proxy web:8501
+    }
+}

@@ -1,0 +1,17 @@
+:80 {
+    encode gzip
+
+    # Temporary public demonstration mode. No authentication is applied.
+    # Anyone who knows the tunnel URL can access the dashboard, API, and noVNC.
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle_path /vnc/* {
+        reverse_proxy sim-vnc:6080
+    }
+
+    handle {
+        reverse_proxy web:8501
+    }
+}
