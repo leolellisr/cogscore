@@ -220,15 +220,12 @@ def render_exception(title: str, error: Exception) -> None:
         st.code(technical, language="text")
 
 
-def navigate(page: str, **params: str) -> None:
-    if page not in NAV_PAGES:
-        page = "Dashboard"
-    st.session_state["navigation_page"] = page
-    st.query_params.clear()
-    st.query_params["page"] = page
-    for key, value in params.items():
-        if value:
-            st.query_params[key] = value
+def navigate(page: str, tab: str | None = None) -> None:
+    st.session_state["_pending_navigation_page"] = page
+
+    if tab is not None:
+        st.session_state["_pending_navigation_tab"] = tab
+
     st.rerun()
 
 

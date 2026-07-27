@@ -20,6 +20,16 @@ st.set_page_config(
 apply_theme()
 require_optional_login()
 
+if "_pending_navigation_page" in st.session_state:
+    st.session_state["navigation_page"] = st.session_state.pop(
+        "_pending_navigation_page"
+    )
+
+if "_pending_navigation_tab" in st.session_state:
+    st.session_state["navigation_tab"] = st.session_state.pop(
+        "_pending_navigation_tab"
+    )
+    
 requested_page = st.query_params.get("page", "Dashboard")
 if requested_page not in NAV_PAGES:
     requested_page = "Dashboard"
