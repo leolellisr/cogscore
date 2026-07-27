@@ -320,6 +320,29 @@ def handle_shutdown_signal(signum: int, _frame: Any) -> None:
     raise SystemExit(0)
 
 
+def docker_daemon_preflight() -> tuple[bool, str]:
+    """Check the daemon from the same process/environment used by experiment jobs."""
+    socket_path = Path("/var/run/docker.sock")
+    completed = subprocess.run(
+        ["docker", "info"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=15,
+    )
+    detail = completed.stderr.strip()
+    if completed.returncode == 0:
+        return True, ""
+
+    return False, (
+        f"docker info exit={completed.returncode}; "
+        f"DOCKER_HOST={os.getenv('DOCKER_HOST')!r}; "
+        f"socket_exists={socket_path.exists()}; "
+        f"socket_is_socket={socket_path.is_socket() if socket_path.exists() else False}; "
+        f"stderr={detail!r}"
+    )
+
+
 def start_architecture_container(
     *,
     container_name: str,
@@ -328,7 +351,7 @@ def start_architecture_container(
     stderr_path: Path,
     labels: dict[str, str] | None = None,
 ) -> None:
-    """Start an uploaded architecture and preserve Docker's real error message."""
+    """Start an uploaded architecture, retrying transient daemon failures."""
     docker_rm_force(container_name)
 
     command = [
@@ -352,24 +375,72 @@ def start_architecture_container(
 
     command.append(image_tag)
 
-    completed = run_command(
-        command,
-        stdout_path=stdout_path,
-        stderr_path=stderr_path,
-        timeout=ARCH_TIMEOUT_SECONDS,
+    attempts = max(1, int(os.getenv("DOCKER_START_ATTEMPTS", "4")))
+    retry_seconds = max(0.1, float(os.getenv("DOCKER_START_RETRY_SECONDS", "2")))
+    last_returncode = 1
+    last_detail = ""
+
+    for attempt in range(1, attempts + 1):
+        daemon_ok, daemon_detail = docker_daemon_preflight()
+        if not daemon_ok:
+            last_detail = daemon_detail
+            info(
+                "Docker daemon preflight failed before architecture start "
+                f"(attempt {attempt}/{attempts}): {daemon_detail}"
+            )
+        else:
+            # Keep the error from this attempt separate from earlier commands in
+            # the same job, otherwise an old Docker message can be reported.
+            attempt_stderr = stderr_path.with_name(
+                f"{stderr_path.stem}.docker-start-{attempt}{stderr_path.suffix}"
+            )
+            attempt_stderr.unlink(missing_ok=True)
+
+            completed = run_command(
+                command,
+                stdout_path=stdout_path,
+                stderr_path=attempt_stderr,
+                timeout=ARCH_TIMEOUT_SECONDS,
+            )
+            last_returncode = completed.returncode
+            last_detail = tail_log(attempt_stderr)
+
+            if completed.returncode == 0:
+                if last_detail:
+                    with stderr_path.open("a", encoding="utf-8") as target:
+                        target.write(last_detail + "\n")
+                attempt_stderr.unlink(missing_ok=True)
+                ACTIVE_ARCHITECTURE_CONTAINERS.add(container_name)
+                return
+
+            if last_detail:
+                with stderr_path.open("a", encoding="utf-8") as target:
+                    target.write(last_detail + "\n")
+
+            transient = any(
+                marker in last_detail.lower()
+                for marker in (
+                    "cannot connect to the docker daemon",
+                    "connection refused",
+                    "context deadline exceeded",
+                    "i/o timeout",
+                )
+            )
+            if not transient:
+                break
+
+        if attempt < attempts:
+            docker_rm_force(container_name)
+            time.sleep(retry_seconds * attempt)
+
+    suffix = f": {last_detail}" if last_detail else ""
+    raise RuntimeError(
+        "Could not start architecture container "
+        f"{container_name} with image {image_tag} "
+        f"on network {COGSCORE_DOCKER_NETWORK} "
+        f"after {attempts} attempt(s) "
+        f"(docker exit {last_returncode}){suffix}"
     )
-
-    if completed.returncode != 0:
-        detail = tail_log(stderr_path)
-        suffix = f": {detail}" if detail else ""
-        raise RuntimeError(
-            "Could not start architecture container "
-            f"{container_name} with image {image_tag} "
-            f"on network {COGSCORE_DOCKER_NETWORK} "
-            f"(docker exit {completed.returncode}){suffix}"
-        )
-
-    ACTIVE_ARCHITECTURE_CONTAINERS.add(container_name)
 
 
 atexit.register(cleanup_active_architecture_containers)
@@ -557,7 +628,16 @@ def handle_validate_architecture(job: dict[str, Any], job_dir: Path) -> dict[str
         raise RuntimeError("Architecture bundle must contain a Dockerfile")
 
     build = run_command(
-        ["docker", "build", "-t", image_tag, "."],
+    [
+        "docker",
+        "buildx",
+        "build",
+        "--load",
+        "--progress=plain",
+        "-t",
+        image_tag,
+        ".",
+        ],
         cwd=source_path,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
@@ -565,7 +645,18 @@ def handle_validate_architecture(job: dict[str, Any], job_dir: Path) -> dict[str
     )
 
     if build.returncode != 0:
-        detail = tail_log(stderr_path, max_chars=4000)
+        stderr_detail = tail_log(stderr_path, max_chars=6000)
+        stdout_detail = tail_log(stdout_path, max_chars=6000)
+
+        details = []
+
+        if stderr_detail:
+            details.append(f"stderr:\n{stderr_detail}")
+
+        if stdout_detail:
+            details.append(f"stdout:\n{stdout_detail}")
+
+        detail = "\n\n".join(details)
         error_message = "Docker build failed"
 
         if detail:

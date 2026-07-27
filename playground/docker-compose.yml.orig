@@ -42,9 +42,6 @@ services:
       - API_DIR=/api_src
       - PROJECT_ROOT=/workspace
       - DATABASE_PATH=/data/db/playground.sqlite
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - DOCKER_START_ATTEMPTS=${DOCKER_START_ATTEMPTS:-4}
-      - DOCKER_START_RETRY_SECONDS=${DOCKER_START_RETRY_SECONDS:-2}
       - COGSCORE_DOCKER_NETWORK=${COGSCORE_DOCKER_NETWORK:-cogscore_online_net}
       - COGSCORE_SIM_CONTAINER=${COGSCORE_SIM_CONTAINER:-cogscore-sim-vnc}
       - COGSCORE_SIM_SERVICE=${COGSCORE_SIM_SERVICE:-sim-vnc}
@@ -54,8 +51,6 @@ services:
       - PYTHONUNBUFFERED=1
       - MPLCONFIGDIR=/tmp/matplotlib
       - HOME=/tmp
-      - DOCKER_BUILDKIT=1
-      - BUILDKIT_PROGRESS=plain
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777
@@ -65,16 +60,16 @@ services:
       - ./services/worker:/worker_src:ro
       - ./scripts:/workspace/scripts:ro
       - ./tools:/workspace/tools:ro
-      - /var/run:/var/run
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test:
         - CMD-SHELL
         - >-
-          python -I -c "import encodings, pandas, matplotlib" &&
-          docker info >/dev/null 2>&1 &&
-          docker network inspect "$${COGSCORE_DOCKER_NETWORK}" >/dev/null 2>&1
+          python -I -c "import encodings, pandas, matplotlib"
+          && docker info >/dev/null 2>&1
+          && docker network inspect "$${COGSCORE_DOCKER_NETWORK}" >/dev/null 2>&1
       interval: 30s
-      timeout: 15s
+      timeout: 10s
       retries: 3
       start_period: 20s
     depends_on:
