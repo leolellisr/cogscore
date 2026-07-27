@@ -80,110 +80,13 @@ def apply_theme() -> None:
 <style>
 :root {
   --cog-primary: #d94b50;
-  --cog-primary-dark: #252733;
-  --cog-header: #f6b38f;
-  --cog-header-hover: #f9c4a8;
-  --cog-surface: #ffffff;
-  --cog-border: rgba(37, 39, 51, 0.16);
+  --cog-primary-soft: rgba(217, 75, 80, 0.10);
+  --cog-border: rgba(128, 128, 128, 0.24);
 }
-
-/* Thin multicolor line inspired by the CogScore presentation website. */
-[data-testid="stAppViewContainer"]::before {
-  content: "";
-  position: fixed;
-  z-index: 10000;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #ef5350, #ff9f43, #f6d365, #7bd389, #4dabf7, #9b5de5);
-}
-
-[data-testid="stHeader"] {
-  background: transparent;
-}
-[data-testid="stSidebar"] {
-  display: none;
-}
-.block-container {
-  padding-top: 0.9rem;
-  padding-bottom: 3rem;
-  max-width: 1800px;
-  padding-left: 2rem;
-  padding-right: 2rem;
-}
-
-/* Top navigation */
-[data-testid="stHorizontalBlock"]:has(.cog-brand) {
-  background: var(--cog-header);
-  border: 1px solid rgba(37, 39, 51, 0.12);
-  border-radius: 0 0 12px 12px;
-  padding: 0.75rem 1rem;
-  min-height: 5.2rem;
-  rgba(37, 39, 51, 0.08);
-  position: sticky;
-  top: .25rem;
-  z-index: 999;
-}
-.cog-brand {
-  color: var(--cog-primary-dark);
-  font-size: 1.15rem;
-  font-weight: 800;
-  letter-spacing: -.02em;
-  white-space: nowrap;
-}
-.cog-brand span {
-  display: block;
-  margin-top: -.15rem;
-  font-size: .62rem;
-  font-weight: 700;
-  letter-spacing: .10em;
-  text-transform: uppercase;
-  opacity: .68;
-}
-.cog-nav-divider {
-  height: 1rem;
-}
-
-/* Header buttons and popovers */
-[data-testid="stHorizontalBlock"]:has(.cog-brand) button {
-  min-height: 3.2rem;
-  padding: 0.65rem 0.85rem !important;
-  border: 0 !important;
-  background: transparent !important;
-  color: var(--cog-primary-dark) !important;
-  font-size: 0.86rem !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.035em !important;
-  text-transform: uppercase !important;
-  line-height: 1.15 !important;
-  white-space: nowrap !important;
-  word-break: keep-all !important;
-  overflow-wrap: normal !important;
-  box-shadow: none !important;
-}
-[data-testid="stHorizontalBlock"]:has(.cog-brand) button p {
-  white-space: nowrap !important;
-  word-break: keep-all !important;
-  overflow-wrap: normal !important;
-  margin: 0 !important;
-}
-[data-testid="stHorizontalBlock"]:has(.cog-brand) button:hover {
-  background: var(--cog-header-hover) !important;
-}
-[data-testid="stPopoverBody"] button {
-  justify-content: flex-start;
-}
-[data-testid="stPopover"] button {
-  white-space: nowrap !important;
-}
-
-[data-testid="stPopover"] button p {
-  white-space: nowrap !important;
-}
-
+.block-container {padding-top: 2rem; padding-bottom: 3rem; max-width: 1500px;}
+[data-testid="stSidebar"] {border-right: 1px solid var(--cog-border);}
 .cog-eyebrow {font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; opacity: .65; margin-bottom: .2rem;}
-.cog-card {border: 1px solid var(--cog-border); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: .75rem; background: var(--cog-surface);}
+.cog-card {border: 1px solid var(--cog-border); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: .75rem;}
 .cog-card h4 {margin: 0 0 .25rem 0;}
 .cog-muted {opacity: .7; font-size: .9rem;}
 .cog-badge {display: inline-flex; align-items: center; gap: .35rem; border-radius: 999px; padding: .2rem .55rem; font-size: .78rem; font-weight: 600; border: 1px solid var(--cog-border);}
@@ -192,20 +95,8 @@ def apply_theme() -> None:
 .cog-status-pending,.cog-status-uploaded,.cog-status-unknown {background: rgba(108,117,125,.10); color: #6c757d;}
 .cog-status-error,.cog-status-offline {background: rgba(220,53,69,.10); color: #dc3545;}
 .cog-status-stale {background: rgba(255,193,7,.12); color: #9a7400;}
-div[data-testid="stMetric"] {border: 1px solid var(--cog-border); border-radius: 12px; padding: .7rem .85rem; background: var(--cog-surface);}
+div[data-testid="stMetric"] {border: 1px solid var(--cog-border); border-radius: 12px; padding: .7rem .85rem;}
 button[kind="primary"] {background-color: var(--cog-primary); border-color: var(--cog-primary);}
-
-@media (max-width: 950px) {
-  [data-testid="stHorizontalBlock"]:has(.cog-brand) {
-    position: static;
-  }
-  .cog-brand span {display: none;}
-  [data-testid="stHorizontalBlock"]:has(.cog-brand) button {
-    font-size: .66rem !important;
-    letter-spacing: 0 !important;
-    text-transform: none !important;
-  }
-}
 </style>
         """,
         unsafe_allow_html=True,
@@ -329,16 +220,13 @@ def render_exception(title: str, error: Exception) -> None:
         st.code(technical, language="text")
 
 
-def navigate(page: str, **params: str) -> None:
-    if page not in NAV_PAGES:
-        page = "Dashboard"
+def navigate(page: str, tab: str | None = None) -> None:
+    st.session_state["_pending_navigation_page"] = page
 
-    st.query_params.clear()
-    st.query_params["page"] = page
+    if tab is not None:
+        st.session_state["_pending_navigation_tab"] = tab
 
-    for key, value in params.items():
-        if value:
-            st.query_params[key] = value
+    st.rerun()
 
 
 def require_optional_login() -> None:
