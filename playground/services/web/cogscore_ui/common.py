@@ -147,20 +147,31 @@ def apply_theme() -> None:
 
 /* Header buttons and popovers */
 [data-testid="stHorizontalBlock"]:has(.cog-brand) button {
-  min-height: 3.2rem;
-  padding: 0.65rem 0.85rem !important;
-  border: 0 !important;
-  background: transparent !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+
+  min-height: 3rem;
+  padding: 0.55rem 0.55rem !important;
+
+  border: 1px solid rgba(37, 39, 51, 0.32) !important;
+  border-radius: 9px !important;
+
+  background: rgba(255, 255, 255, 0.16) !important;
   color: var(--cog-primary-dark) !important;
-  font-size: 0.86rem !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.035em !important;
+
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.015em !important;
   text-transform: uppercase !important;
-  line-height: 1.15 !important;
+
+  line-height: 1.1 !important;
   white-space: nowrap !important;
-  word-break: keep-all !important;
-  overflow-wrap: normal !important;
-  box-shadow: none !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
+
+  box-shadow: 0 1px 2px rgba(37, 39, 51, 0.08) !important;
 }
 [data-testid="stHorizontalBlock"]:has(.cog-brand) button p {
   white-space: nowrap !important;

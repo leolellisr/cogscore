@@ -35,10 +35,10 @@ def top_navigation() -> None:
         operations_col,
         help_col,
     ) = st.columns(
-        [2.4, 1.3, 1.35, 1.65, 1.7, 1.55, 2.1],
-        vertical_alignment="center",
-        gap="medium",
-    )
+            [2.2, 1.35, 1.4, 1.8, 2.0, 1.7, 2.45],
+            vertical_alignment="center",
+            gap="small",
+        )
 
     with brand:
         st.markdown(

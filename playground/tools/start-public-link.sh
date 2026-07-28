@@ -32,7 +32,19 @@ compose \
 compose \
     -f docker-compose.yml \
     -f docker-compose.public.yml \
-    up -d --build api worker web sim-vnc proxy tunnel
+    up -d --build api worker web sim-vnc proxy
+
+# Quick Tunnel hostnames are temporary. Recreate only the tunnel so the
+# script never reuses a hostname left in an old container log.
+compose \
+    -f docker-compose.yml \
+    -f docker-compose.public.yml \
+    rm -sf tunnel >/dev/null 2>&1 || true
+
+compose \
+    -f docker-compose.yml \
+    -f docker-compose.public.yml \
+    up -d --force-recreate tunnel
 
 echo "Waiting for Cloudflare to create the public URL..."
 tries=0
@@ -41,7 +53,7 @@ while [ "$tries" -lt 60 ]; do
     url=$(compose \
         -f docker-compose.yml \
         -f docker-compose.public.yml \
-        logs --no-color tunnel 2>/dev/null \
+        logs --since=2m --no-color tunnel 2>/dev/null \
         | sed -n 's#.*\(https://[a-zA-Z0-9-]*\.trycloudflare\.com\).*#\1#p' \
         | tail -n 1)
 

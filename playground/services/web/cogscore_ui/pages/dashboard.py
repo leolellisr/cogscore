@@ -49,11 +49,11 @@ def render() -> None:
 
     st.subheader("Quick actions")
     actions = st.columns(4)
-    if actions[0].button("Upload architecture", use_container_width=True):
+    if actions[0].button("Architectures", use_container_width=True):
         navigate("Architectures", tab="upload")
     if actions[1].button("Import results", use_container_width=True):
         navigate("Imported results", tab="upload")
-    if actions[2].button("Run experiment", type="primary", use_container_width=True):
+    if actions[2].button("New experiment", type="primary", use_container_width=True):
         navigate("New experiment")
     if actions[3].button("View plots", use_container_width=True):
         navigate("Plots")

@@ -4,7 +4,7 @@ This work aims to present a general framework for the automated evaluation of di
 
 ## Implemented modules
 
-The modules already implemented are colored in the figure below. Modules that have not yet been implemented are shown in gray.
+The modules already implemented are colored in the table below. Modules that have not yet been implemented are shown in gray.
 
 <object data="figures/CSTReference.pdf" type="application/pdf" width="700px" height="700px">
     <embed src="figures/CSTReference.pdf">
