@@ -4,14 +4,16 @@ services:
       - ./deploy/Caddyfile.public:/etc/caddy/Caddyfile:ro
 
   tunnel:
-    image: cloudflare/cloudflared:latest
+    image: ngrok/ngrok:latest
     container_name: cogscore-public-tunnel
     restart: unless-stopped
     command:
-      - tunnel
-      - --no-autoupdate
-      - --url
+      - http
       - http://proxy:80
+      - --url
+      - https://${NGROK_DOMAIN:-affix-decimeter-eradicate.ngrok-free.dev}
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in playground/.env}
     depends_on:
       - proxy
     networks:

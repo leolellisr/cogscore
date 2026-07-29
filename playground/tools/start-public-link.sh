@@ -7,6 +7,37 @@ cd "$PLAYGROUND_DIR"
 
 [ -f .env ] || touch .env
 
+DEFAULT_NGROK_DOMAIN="affix-decimeter-eradicate.ngrok-free.dev"
+
+read_env_value() {
+    key=$1
+    sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" .env \
+        | tail -n 1 \
+        | tr -d '\r' \
+        | sed 's/^"//; s/"$//; s/^'"'"'//; s/'"'"'$//'
+}
+
+ngrok_token=${NGROK_AUTHTOKEN:-$(read_env_value NGROK_AUTHTOKEN)}
+if [ -z "$ngrok_token" ]; then
+    echo "Error: NGROK_AUTHTOKEN is not configured." >&2
+    echo "Add a valid token to playground/.env:" >&2
+    echo "  NGROK_AUTHTOKEN=your-new-ngrok-token" >&2
+    exit 1
+fi
+
+ngrok_domain=${NGROK_DOMAIN:-$(read_env_value NGROK_DOMAIN)}
+if [ -z "$ngrok_domain" ]; then
+    ngrok_domain=$DEFAULT_NGROK_DOMAIN
+fi
+
+case "$ngrok_domain" in
+    http://*|https://*)
+        echo "Error: NGROK_DOMAIN must contain only the hostname, without http:// or https://." >&2
+        echo "Example: NGROK_DOMAIN=$DEFAULT_NGROK_DOMAIN" >&2
+        exit 1
+        ;;
+esac
+
 if docker compose version >/dev/null 2>&1; then
     compose() {
         docker compose "$@"
@@ -24,6 +55,10 @@ else
     exit 1
 fi
 
+# Export the validated values so Compose receives environment overrides too.
+export NGROK_AUTHTOKEN="$ngrok_token"
+export NGROK_DOMAIN="$ngrok_domain"
+
 compose \
     -f docker-compose.yml \
     -f docker-compose.public.yml \
@@ -32,42 +67,22 @@ compose \
 compose \
     -f docker-compose.yml \
     -f docker-compose.public.yml \
-    up -d --build api worker web sim-vnc proxy
+    up -d --build api worker web sim-vnc proxy tunnel
 
-# Quick Tunnel hostnames are temporary. Recreate only the tunnel so the
-# script never reuses a hostname left in an old container log.
-compose \
-    -f docker-compose.yml \
-    -f docker-compose.public.yml \
-    rm -sf tunnel >/dev/null 2>&1 || true
-
-compose \
-    -f docker-compose.yml \
-    -f docker-compose.public.yml \
-    up -d --force-recreate tunnel
-
-echo "Waiting for Cloudflare to create the public URL..."
 tries=0
-url=""
-while [ "$tries" -lt 60 ]; do
-    url=$(compose \
-        -f docker-compose.yml \
-        -f docker-compose.public.yml \
-        logs --since=2m --no-color tunnel 2>/dev/null \
-        | sed -n 's#.*\(https://[a-zA-Z0-9-]*\.trycloudflare\.com\).*#\1#p' \
-        | tail -n 1)
-
-    if [ -n "$url" ]; then
+running=""
+while [ "$tries" -lt 15 ]; do
+    running=$(docker inspect -f '{{.State.Running}}' cogscore-public-tunnel 2>/dev/null || true)
+    if [ "$running" = "true" ]; then
         break
     fi
-
     tries=$((tries + 1))
-    sleep 2
+    sleep 1
 done
 
-if [ -z "$url" ]; then
-    echo "The tunnel container started, but the public URL was not detected." >&2
-    echo "Inspect the logs from the playground directory with:" >&2
+if [ "$running" != "true" ]; then
+    echo "The ngrok container did not remain running." >&2
+    echo "Inspect its logs with:" >&2
     if docker compose version >/dev/null 2>&1; then
         echo "  docker compose -f docker-compose.yml -f docker-compose.public.yml logs tunnel" >&2
     else
@@ -76,7 +91,8 @@ if [ -z "$url" ]; then
     exit 1
 fi
 
-printf '\nCogScore is publicly available at:\n%s\n\n' "$url"
-echo "No password is configured. Anyone with this URL can access the application."
+public_url="https://${ngrok_domain}"
+printf '\nCogScore is publicly available at:\n%s\n\n' "$public_url"
+echo "This address remains fixed while the ngrok dev domain is assigned to your account."
+echo "No proxy password is configured. Anyone with this URL can access the application."
 echo "Keep this computer, Docker, and the tunnel container running."
-echo "The trycloudflare.com address may change when the tunnel is recreated."

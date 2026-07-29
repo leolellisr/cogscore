@@ -1514,22 +1514,35 @@ docker compose up -d --build --force-recreate api worker web sim-vnc proxy
 ```
 
 
-## Temporary public link without a domain or password
+## Fixed public link without owning a domain
 
-The playground can be published temporarily from the local computer through a
-Cloudflare Quick Tunnel. This configuration does not require a domain, router
-port forwarding, a Cloudflare account, or an access password.
+The playground can be published from the local computer through the official
+ngrok Docker image. The configured ngrok development domain is stable across
+container and computer restarts:
 
-Start the public link from the `playground` directory:
+```text
+https://affix-decimeter-eradicate.ngrok-free.dev
+```
+
+A ngrok account and authtoken are required. Configure a newly generated token
+without displaying it or placing it in the shell history:
+
+```bash
+./tools/configure-ngrok.sh
+```
+
+The script writes the following entries to `.env` and sets its permissions to
+`600`. `NGROK_DOMAIN` must not include `https://`:
+
+```text
+NGROK_AUTHTOKEN=replace-with-a-new-ngrok-authtoken
+NGROK_DOMAIN=affix-decimeter-eradicate.ngrok-free.dev
+```
+
+Start the fixed public link from the `playground` directory:
 
 ```bash
 ./tools/start-public-link.sh
-```
-
-The command prints an HTTPS address similar to:
-
-```text
-https://random-words.trycloudflare.com
 ```
 
 Anyone who has this address can access the dashboard, API, architecture upload,
@@ -1542,5 +1555,5 @@ Stop only the public tunnel with:
 ./tools/stop-public-link.sh
 ```
 
-The local services remain available after the tunnel is stopped. The temporary
-address may change whenever the tunnel container is recreated.
+The local services remain available after the tunnel is stopped. Restarting the
+ngrok container does not change the configured development-domain address.

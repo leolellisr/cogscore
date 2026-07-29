@@ -1,6 +1,10 @@
 # CogScore - An Online Evaluation Playground For Cognitive Architectures With Developmental Robotics.
 
-This work aims to present a general framework for the automated evaluation of different levels of diverse cognitive capabilities of cognitive architectures.
+This work aims to present a general framework for an online evaluation of different levels of diverse capabilities of cognitive architectures.
+
+[Public Website](https://leolellisr.github.io/cogscore.github.io/)
+
+[Playground Online](https://affix-decimeter-eradicate.ngrok-free.dev/)
 
 ## Implemented modules
 

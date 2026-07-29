@@ -7,6 +7,14 @@ def render() -> None:
     st.title("Documentation")
     st.caption("Operational reference for architecture integration, result bundles, experiments, and plots.")
 
+    st.markdown(
+        '''
+[Public Website](https://leolellisr.github.io/cogscore.github.io/)
+
+[Playground Online](https://affix-decimeter-eradicate.ngrok-free.dev/)
+
+'''
+    )
     architecture_tab, results_tab, execution_tab, online_tab = st.tabs(
         ["Architecture bundles", "Result bundles", "Experiment execution", "Online deployment"]
     )
