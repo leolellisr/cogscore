@@ -143,6 +143,7 @@ MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
 DEFAULT_X_POINTS = 50
 DEFAULT_SMOOTH_WINDOW = 7
 DEFAULT_IMPUTE_LOOKBACK = 5
+DEFAULT_STD_FALLBACK = 0.01
 
 DEFAULT_BLEND_NOISE_PCT = 0.15
 DEFAULT_BLEND_RANDOM_SEED = 12345
@@ -884,6 +885,33 @@ def previous_mean_fallback(series: pd.Series, lookback: int) -> pd.Series:
     return out.bfill().ffill()
 
 
+def find_std_column(df: pd.DataFrame, metric: str) -> Optional[str]:
+    """Return a source-provided standard-deviation column when one exists."""
+    candidates = [
+        f"{metric}_std",
+        f"std_{metric}",
+        f"{metric}_sd",
+        f"sd_{metric}",
+        f"{metric}_stdev",
+        f"stdev_{metric}",
+        f"{metric}_stddev",
+        f"stddev_{metric}",
+    ]
+    for column in candidates:
+        if column in df.columns and pd.to_numeric(df[column], errors="coerce").notna().any():
+            return column
+    return None
+
+
+def sanitize_std(values: pd.Series) -> pd.Series:
+    """Keep valid SD values (including true zero) and replace missing ones by 0.01."""
+    std = pd.to_numeric(values, errors="coerce").astype(float)
+    valid = np.isfinite(std.to_numpy(dtype=float)) & (std.to_numpy(dtype=float) >= 0.0)
+    out = std.copy()
+    out.loc[~valid] = DEFAULT_STD_FALLBACK
+    return out
+
+
 def smooth_values(values: pd.Series, window: int) -> pd.Series:
     y = pd.to_numeric(values, errors="coerce")
     if window is None or window <= 1 or len(y) <= 2:
@@ -907,6 +935,15 @@ def complete_metric(
     impute_zeros: bool,
     impute_lookback: int,
 ) -> pd.DataFrame:
+    """Complete a mean curve and attach +/-1 SD for every x-point.
+
+    SD priority:
+    1) a source-provided SD column, when present;
+    2) sample SD estimated from repeated observations in the same group/episode;
+    3) DEFAULT_STD_FALLBACK (= 0.01) when SD is unavailable.
+
+    A genuine computed/source SD of 0.0 is preserved.
+    """
     required = group_cols + ["episode", metric]
     if not has_columns(df, required):
         return pd.DataFrame()
@@ -916,7 +953,34 @@ def complete_metric(
         return pd.DataFrame()
 
     work[metric] = pd.to_numeric(work[metric], errors="coerce")
-    grouped = work.groupby(group_cols + ["episode_axis"], as_index=False, dropna=False)[metric].mean()
+    key_cols = group_cols + ["episode_axis"]
+
+    mean_df = (
+        work.groupby(key_cols, as_index=False, dropna=False)[metric]
+        .mean()
+    )
+    empirical_std = (
+        work.groupby(key_cols, as_index=False, dropna=False)[metric]
+        .std(ddof=1)
+        .rename(columns={metric: "__empirical_std"})
+    )
+    grouped = mean_df.merge(empirical_std, on=key_cols, how="left")
+
+    source_std_col = find_std_column(work, metric)
+    if source_std_col is not None:
+        work[source_std_col] = pd.to_numeric(work[source_std_col], errors="coerce")
+        source_values = work[source_std_col].to_numpy(dtype=float)
+        source_valid = np.isfinite(source_values) & (source_values >= 0.0)
+        work.loc[~source_valid, source_std_col] = np.nan
+        source_std = (
+            work.groupby(key_cols, as_index=False, dropna=False)[source_std_col]
+            .mean()
+            .rename(columns={source_std_col: "__source_std"})
+        )
+        grouped = grouped.merge(source_std, on=key_cols, how="left")
+        grouped["__metric_std"] = grouped["__source_std"].combine_first(grouped["__empirical_std"])
+    else:
+        grouped["__metric_std"] = grouped["__empirical_std"]
 
     full_x = pd.Index(range(1, x_points + 1), name="episode_axis")
     frames: list[pd.DataFrame] = []
@@ -935,6 +999,12 @@ def complete_metric(
         if y.notna().sum() == 0:
             continue
 
+        # SD belongs to observed data.  If a mean point itself is imputed, the
+        # corresponding SD is considered unavailable and receives 0.01.
+        std = pd.to_numeric(completed["__metric_std"], errors="coerce")
+        std = std.where(y.notna(), np.nan)
+        std = sanitize_std(std)
+
         y_inferred = y.interpolate(method="linear", limit_direction="both")
         y_inferred = previous_mean_fallback(y_inferred, impute_lookback)
         y_smooth = smooth_values(y_inferred, smooth_window)
@@ -946,6 +1016,7 @@ def complete_metric(
 
         completed[metric] = y_inferred.values
         completed[f"{metric}_smooth"] = y_smooth.values
+        completed[f"{metric}_std"] = std.values
         frames.append(completed.reset_index())
 
     if not frames:
@@ -1047,6 +1118,18 @@ def plot_metric_set(
                     alpha=0.95,
                     label=label,
                 )
+                ax.errorbar(
+                    sub["episode_axis"],
+                    sub[f"{metric}_smooth"],
+                    yerr=sub[f"{metric}_std"],
+                    fmt="none",
+                    ecolor=color,
+                    elinewidth=0.8,
+                    capsize=2.0,
+                    capthick=0.8,
+                    alpha=0.55,
+                    label="_nolegend_",
+                )
                 variant_counter += 1
                 any_line = True
 
@@ -1114,6 +1197,18 @@ def plot_all_experiment_score(
             alpha=0.95,
             label=f"{agent} / Exp {exp_id_int}",
         )
+        ax.errorbar(
+            sub["episode_axis"],
+            sub["behavioral_motivation_score_smooth"],
+            yerr=sub["behavioral_motivation_score_std"],
+            fmt="none",
+            ecolor=color,
+            elinewidth=0.8,
+            capsize=2.0,
+            capthick=0.8,
+            alpha=0.55,
+            label="_nolegend_",
+        )
         variant_counter += 1
 
     ax.set_title("Integrated behavioral motivation score")
@@ -1135,20 +1230,44 @@ def plot_action_composition(summary: pd.DataFrame, out_dir: Path, show: bool) ->
     for col in metrics:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    grouped = df.groupby(["agent", "motivation_experiment_id"], dropna=False)[metrics].mean().reset_index()
-    if grouped.empty:
+    grouped_mean = df.groupby(["agent", "motivation_experiment_id"], dropna=False)[metrics].mean().reset_index()
+    grouped_std = df.groupby(["agent", "motivation_experiment_id"], dropna=False)[metrics].std(ddof=1).reset_index()
+    for metric in metrics:
+        grouped_std[metric] = sanitize_std(grouped_std[metric])
+
+    if grouped_mean.empty:
         return
 
-    for agent, sub in grouped.groupby("agent"):
+    for agent, sub in grouped_mean.groupby("agent"):
         sub = sub.sort_values("motivation_experiment_id")
+        sub_std = grouped_std[grouped_std["agent"] == agent].sort_values("motivation_experiment_id")
+        sub_std = sub[["motivation_experiment_id"]].merge(
+            sub_std, on="motivation_experiment_id", how="left"
+        )
+        for metric in metrics:
+            sub_std[metric] = sanitize_std(sub_std[metric])
+
         x = np.arange(len(sub))
         width = 0.25
 
         plt.figure(figsize=(12, 6))
         ax = plt.gca()
-        ax.bar(x - width, sub["mean_motor_action_count"], width, label="Motor actions")
-        ax.bar(x, sub["mean_virtual_action_count"], width, label="Virtual actions")
-        ax.bar(x + width, sub["mean_attentional_action_count"], width, label="Attentional actions")
+        error_kw = {"elinewidth": 1.0, "capthick": 1.0, "alpha": 0.75}
+        ax.bar(
+            x - width, sub["mean_motor_action_count"], width,
+            yerr=sub_std["mean_motor_action_count"], capsize=4, error_kw=error_kw,
+            label="Motor actions",
+        )
+        ax.bar(
+            x, sub["mean_virtual_action_count"], width,
+            yerr=sub_std["mean_virtual_action_count"], capsize=4, error_kw=error_kw,
+            label="Virtual actions",
+        )
+        ax.bar(
+            x + width, sub["mean_attentional_action_count"], width,
+            yerr=sub_std["mean_attentional_action_count"], capsize=4, error_kw=error_kw,
+            label="Attentional actions",
+        )
         ax.set_xticks(x)
         ax.set_xticklabels([f"Exp {int(e)}" for e in sub["motivation_experiment_id"]])
         ax.set_title(f"Action composition - {agent}")

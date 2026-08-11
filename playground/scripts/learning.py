@@ -14,6 +14,7 @@ import numpy as np
 
 DEFAULT_MAX_EPISODES = 50
 DEFAULT_SMOOTH_WINDOW = 7
+DEFAULT_STD_FALLBACK = 0.01
 
 FOV_MIN_DEGREES = -30.0
 FOV_MAX_DEGREES = 30.0
@@ -176,10 +177,19 @@ def aggregate_experiment(
 
     with np.errstate(invalid="ignore", divide="ignore"):
         mean = np.nanmean(matrix, axis=0)
-        std = np.nanstd(matrix, axis=0)
+
+    # Sample standard deviation across independent runs.  With fewer than two
+    # observations the deviation is not estimable, so use the thesis-wide
+    # fallback requested by the analysis protocol.
+    std = np.full(len(episodes), DEFAULT_STD_FALLBACK, dtype=float)
+    finite_counts = np.sum(np.isfinite(matrix), axis=0)
+    for col, count in enumerate(finite_counts):
+        if count >= 2:
+            candidate = float(np.nanstd(matrix[:, col], ddof=1))
+            if np.isfinite(candidate) and candidate >= 0.0:
+                std[col] = candidate
 
     mean = smooth_nan(mean, smooth_window)
-    std = smooth_nan(std, smooth_window)
     return np.asarray(episodes, dtype=float), mean, std, len(run_series)
 
 
@@ -220,12 +230,9 @@ def draw_curve(
     mean = mean[valid]
     std = std[valid]
 
-    std = np.nan_to_num(
-        std,
-        nan=0.0,
-        posinf=0.0,
-        neginf=0.0,
-    )
+    std = np.asarray(std, dtype=float)
+    invalid_std = ~np.isfinite(std) | (std < 0.0)
+    std[invalid_std] = DEFAULT_STD_FALLBACK
 
     line, = ax.plot(
         x,
@@ -236,6 +243,21 @@ def draw_curve(
     )
 
     color = line.get_color()
+
+    # Explicit +/- 1 SD error bars at every plotted episode.
+    ax.errorbar(
+        x,
+        mean,
+        yerr=std,
+        fmt="none",
+        ecolor=color,
+        elinewidth=0.9,
+        capsize=2.5,
+        capthick=0.9,
+        alpha=0.60,
+        zorder=4,
+        label="_nolegend_",
+    )
 
     lower = mean - std
     upper = mean + std

@@ -120,6 +120,7 @@ MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
 DEFAULT_X_POINTS = 50
 DEFAULT_SMOOTH_WINDOW = 7
 DEFAULT_IMPUTE_LOOKBACK = 5
+DEFAULT_STD_FALLBACK = 0.01
 
 SHOW_MARKERS = True
 
@@ -864,6 +865,33 @@ def previous_mean_fallback(series: pd.Series, lookback: int) -> pd.Series:
     return out.bfill().ffill()
 
 
+def find_std_column(df: pd.DataFrame, metric: str) -> Optional[str]:
+    """Return a source-provided standard-deviation column when one exists."""
+    candidates = [
+        f"{metric}_std",
+        f"std_{metric}",
+        f"{metric}_sd",
+        f"sd_{metric}",
+        f"{metric}_stdev",
+        f"stdev_{metric}",
+        f"{metric}_stddev",
+        f"stddev_{metric}",
+    ]
+    for column in candidates:
+        if column in df.columns and pd.to_numeric(df[column], errors="coerce").notna().any():
+            return column
+    return None
+
+
+def sanitize_std(values: pd.Series) -> pd.Series:
+    """Keep valid SD values (including true zero) and replace missing ones by 0.01."""
+    std = pd.to_numeric(values, errors="coerce").astype(float)
+    valid = np.isfinite(std.to_numpy(dtype=float)) & (std.to_numpy(dtype=float) >= 0.0)
+    out = std.copy()
+    out.loc[~valid] = DEFAULT_STD_FALLBACK
+    return out
+
+
 def smooth_values(values: pd.Series, window: int) -> pd.Series:
     y = pd.to_numeric(values, errors="coerce")
 
@@ -894,33 +922,52 @@ def complete_metric(
     impute_zeros: bool,
     impute_lookback: int,
 ) -> pd.DataFrame:
-    """
-    Returns one completed and smoothed curve per group.
+    """Complete a mean curve and attach +/-1 SD for every x-point.
 
-    Each curve has exactly x_points rows.
-    Missing points are inferred by:
-    1) optional zero masking;
-    2) linear interpolation;
-    3) previous-mean fallback;
-    4) backfill/forward-fill for edge cases.
+    SD priority:
+    1) a source-provided SD column, when present;
+    2) sample SD estimated from repeated observations in the same group/episode;
+    3) DEFAULT_STD_FALLBACK (= 0.01) when SD is unavailable.
+
+    A genuine computed/source SD of 0.0 is preserved.
     """
     required = group_cols + ["episode", metric]
-
     if not has_columns(df, required):
         return pd.DataFrame()
 
     work = prepare_episode_axis(df, x_points)
-
     if work.empty:
         return pd.DataFrame()
 
     work[metric] = pd.to_numeric(work[metric], errors="coerce")
+    key_cols = group_cols + ["episode_axis"]
 
-    grouped = (
-        work
-        .groupby(group_cols + ["episode_axis"], as_index=False, dropna=False)[metric]
+    mean_df = (
+        work.groupby(key_cols, as_index=False, dropna=False)[metric]
         .mean()
     )
+    empirical_std = (
+        work.groupby(key_cols, as_index=False, dropna=False)[metric]
+        .std(ddof=1)
+        .rename(columns={metric: "__empirical_std"})
+    )
+    grouped = mean_df.merge(empirical_std, on=key_cols, how="left")
+
+    source_std_col = find_std_column(work, metric)
+    if source_std_col is not None:
+        work[source_std_col] = pd.to_numeric(work[source_std_col], errors="coerce")
+        source_values = work[source_std_col].to_numpy(dtype=float)
+        source_valid = np.isfinite(source_values) & (source_values >= 0.0)
+        work.loc[~source_valid, source_std_col] = np.nan
+        source_std = (
+            work.groupby(key_cols, as_index=False, dropna=False)[source_std_col]
+            .mean()
+            .rename(columns={source_std_col: "__source_std"})
+        )
+        grouped = grouped.merge(source_std, on=key_cols, how="left")
+        grouped["__metric_std"] = grouped["__source_std"].combine_first(grouped["__empirical_std"])
+    else:
+        grouped["__metric_std"] = grouped["__empirical_std"]
 
     full_x = pd.Index(range(1, x_points + 1), name="episode_axis")
     frames: list[pd.DataFrame] = []
@@ -928,38 +975,39 @@ def complete_metric(
     for key, sub in grouped.groupby(group_cols, dropna=False):
         if not isinstance(key, tuple):
             key = (key,)
-
         sub = sub.sort_values("episode_axis").set_index("episode_axis")
         completed = sub.reindex(full_x)
-
         for col, value in zip(group_cols, key):
             completed[col] = value
 
         y = pd.to_numeric(completed[metric], errors="coerce")
-
         if impute_zeros:
             y = y.mask(y == 0.0)
-
         if y.notna().sum() == 0:
             continue
+
+        # SD belongs to observed data.  If a mean point itself is imputed, the
+        # corresponding SD is considered unavailable and receives 0.01.
+        std = pd.to_numeric(completed["__metric_std"], errors="coerce")
+        std = std.where(y.notna(), np.nan)
+        std = sanitize_std(std)
 
         y_inferred = y.interpolate(method="linear", limit_direction="both")
         y_inferred = previous_mean_fallback(y_inferred, impute_lookback)
         y_smooth = smooth_values(y_inferred, smooth_window)
 
         clip = value_clip_range(metric)
-
         if clip is not None:
             y_inferred = y_inferred.clip(*clip)
             y_smooth = y_smooth.clip(*clip)
 
         completed[metric] = y_inferred.values
         completed[f"{metric}_smooth"] = y_smooth.values
+        completed[f"{metric}_std"] = std.values
         frames.append(completed.reset_index())
 
     if not frames:
         return pd.DataFrame()
-
     return pd.concat(frames, ignore_index=True, sort=False)
 
 
@@ -1059,6 +1107,18 @@ def plot_metric_set(
                     linewidth=2.1,
                     alpha=0.95,
                     label=label,
+                )
+                ax.errorbar(
+                    sub["episode_axis"],
+                    sub[f"{metric}_smooth"],
+                    yerr=sub[f"{metric}_std"],
+                    fmt="none",
+                    ecolor=color,
+                    elinewidth=0.8,
+                    capsize=2.0,
+                    capthick=0.8,
+                    alpha=0.55,
+                    label="_nolegend_",
                 )
 ##                print(f"  Added line: {label} (Exp {int(exp_id)}, metric: {metric})")
 ##                print(f"    Data points: {len(sub)}, raw range: [{sub[metric].min():.2f}, {sub[metric].max():.2f}]")
