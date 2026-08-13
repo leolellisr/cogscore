@@ -31,7 +31,6 @@ _DASHBOARD_PLOT_DOMAINS = [
     ("learning", "Learning"),
 ]
 _DASHBOARD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
-_DASHBOARD_MAX_EXAMPLES = 8
 
 
 def _plot_benchmark_id(item: dict[str, Any]) -> str:
@@ -65,13 +64,11 @@ def _image_data_uri(path: Path) -> str | None:
 
 def _dashboard_plot_examples(items: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
     examples = {benchmark: [] for benchmark, _ in _DASHBOARD_PLOT_DOMAINS}
-    seen: dict[str, set[str]] = {benchmark: set() for benchmark, _ in _DASHBOARD_PLOT_DOMAINS}
-
-    # /plots is already newest-first. Keeping that order means the dashboard automatically
-    # follows the newest generated comparison without requiring a separate configuration file.
+    # /plots is already newest-first. Keep every generated image so the dashboard
+    # carousel can browse the complete plot catalogue for each benchmark domain.
     for item in items:
         benchmark = _plot_benchmark_id(item)
-        if benchmark not in examples or len(examples[benchmark]) >= _DASHBOARD_MAX_EXAMPLES:
+        if benchmark not in examples:
             continue
         extension = str(item.get("extension") or "").lower()
         if extension not in _DASHBOARD_IMAGE_EXTENSIONS:
@@ -80,13 +77,9 @@ def _dashboard_plot_examples(items: list[dict[str, Any]]) -> dict[str, list[dict
         if not path.is_file():
             continue
         title = _plot_title(item)
-        # Avoid filling a carousel with the same logical measure from older generations.
-        if title in seen[benchmark]:
-            continue
         uri = _image_data_uri(path)
         if not uri:
             continue
-        seen[benchmark].add(title)
         examples[benchmark].append({"src": uri, "title": title})
 
     return examples
@@ -231,8 +224,9 @@ def _render_plot_examples() -> None:
     </html>
     """
 
-    # Compact two-row 16:9 gallery plus headers/captions and the pause control.
-    components.html(component_html, height=790, scrolling=False)
+    # Two complete 16:9 rows plus headers/captions and the pause control.
+    # The previous 790px iframe clipped the lower row on wide/full-screen layouts.
+    components.html(component_html, height=1040, scrolling=False)
 
 def render() -> None:
     st.title("Dashboard")
@@ -335,3 +329,23 @@ def render() -> None:
                 "run_status": summary.get("run_status", {}),
             }
         )
+
+    st.divider()
+    about_col, license_col = st.columns(2, gap="large")
+    with about_col:
+        st.markdown("### About CogScore")
+        st.markdown(
+            "CogScore is an online evaluation playground for cognitive architectures in "
+            "developmental robotics. It organizes reproducible experiments and comparison "
+            "plots across four benchmark domains: **Sensory, Attention, Motivation, and Learning**."
+        )
+    with license_col:
+        st.markdown("### License")
+        st.markdown(
+            "CogScore is distributed under the **MIT License**. "
+            "Copyright © 2024 Leonardo de Lellis Rossi. The software may be used, copied, "
+            "modified, merged, published, distributed, sublicensed, and/or sold under the "
+            "conditions stated in the project LICENSE file."
+        )
+
+    st.caption("CogScore — Online Playground for Cognitive Architecture Evaluation")
