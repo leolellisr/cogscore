@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import html
-import json
+import os
+import time
 from pathlib import Path
-from urllib.parse import quote
 from typing import Any
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from .. import api_client
 from ..common import (
@@ -28,7 +26,8 @@ _DASHBOARD_PLOT_DOMAINS = [
     ("motivation", "Motivation"),
     ("learning", "Learning"),
 ]
-_DASHBOARD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+_DASHBOARD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_DASHBOARD_PLOTS_ROOT = Path(os.getenv("PLOTS_DIR", "/data/plots")).resolve()
 
 
 def _plot_benchmark_id(item: dict[str, Any]) -> str:
@@ -50,38 +49,79 @@ def _plot_title(item: dict[str, Any]) -> str:
     return Path(str(item.get("name") or "Plot")).stem.replace("_", " ").title()
 
 
-def _plot_image_url(item: dict[str, Any]) -> str | None:
+def _plot_local_path(item: dict[str, Any]) -> str | None:
     relative_path = str(item.get("relative_path") or "").strip().replace("\\", "/")
     if not relative_path or relative_path.startswith("/") or ".." in Path(relative_path).parts:
         return None
-    return "/api/plot-files/" + quote(relative_path, safe="/")
+    candidate = (_DASHBOARD_PLOTS_ROOT / relative_path).resolve()
+    try:
+        candidate.relative_to(_DASHBOARD_PLOTS_ROOT)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    if candidate.suffix.lower() not in _DASHBOARD_IMAGE_EXTENSIONS:
+        return None
+    return str(candidate)
 
 
 def _dashboard_plot_examples(items: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
     examples = {benchmark: [] for benchmark, _ in _DASHBOARD_PLOT_DOMAINS}
-    # /plots is already newest-first. Keep every generated image so the dashboard
-    # carousel can browse the complete plot catalogue for each benchmark domain.
+    # /plots is already newest-first. Keep every generated raster image. The web
+    # container mounts /data read-only, so Streamlit can serve the selected image
+    # directly without relying on browser access to /api or embedding all plots.
     for item in items:
         benchmark = _plot_benchmark_id(item)
         if benchmark not in examples:
             continue
-        extension = str(item.get("extension") or "").lower()
-        if extension not in _DASHBOARD_IMAGE_EXTENSIONS:
+        path = _plot_local_path(item)
+        if not path:
             continue
-        title = _plot_title(item)
-        image_url = _plot_image_url(item)
-        if not image_url:
-            continue
-        examples[benchmark].append({"src": image_url, "title": title})
-
+        examples[benchmark].append({"path": path, "title": _plot_title(item)})
     return examples
 
 
+def _gallery_state() -> tuple[dict[str, int], bool]:
+    positions_key = "dashboard_gallery_positions"
+    paused_key = "dashboard_gallery_paused"
+    tick_key = "dashboard_gallery_last_tick"
+
+    if positions_key not in st.session_state:
+        st.session_state[positions_key] = {benchmark: 0 for benchmark, _ in _DASHBOARD_PLOT_DOMAINS}
+    if paused_key not in st.session_state:
+        st.session_state[paused_key] = False
+    if tick_key not in st.session_state:
+        st.session_state[tick_key] = time.monotonic()
+
+    return st.session_state[positions_key], bool(st.session_state[paused_key])
+
+
+def _reset_gallery_tick() -> None:
+    st.session_state["dashboard_gallery_last_tick"] = time.monotonic()
+
+
+def _toggle_gallery_pause() -> None:
+    st.session_state["dashboard_gallery_paused"] = not bool(
+        st.session_state.get("dashboard_gallery_paused", False)
+    )
+    _reset_gallery_tick()
+
+
+def _step_gallery(domain: str, amount: int, size: int) -> None:
+    if size <= 0:
+        return
+    positions, _ = _gallery_state()
+    positions[domain] = (int(positions.get(domain, 0)) + amount) % size
+    st.session_state["dashboard_gallery_positions"] = positions
+    _reset_gallery_tick()
+
+
+@st.fragment(run_every="5s")
 def _render_plot_examples() -> None:
     st.subheader("Benchmark plot examples")
     st.caption(
-        "Examples from the four CogScore modalities. Use the arrows to browse; "
-        "the gallery also advances automatically every 5 seconds."
+        "Plots from the four CogScore modalities. Use the arrows to browse every generated figure; "
+        "the gallery advances automatically every 5 seconds unless paused."
     )
 
     try:
@@ -92,134 +132,73 @@ def _render_plot_examples() -> None:
         plot_items = []
 
     examples = _dashboard_plot_examples(plot_items)
-    payload = {
-        benchmark: examples.get(benchmark, [])
-        for benchmark, _ in _DASHBOARD_PLOT_DOMAINS
-    }
-    payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+    positions, paused = _gallery_state()
 
-    cards = []
-    for benchmark, label in _DASHBOARD_PLOT_DOMAINS:
-        cards.append(
-            f"""
-            <article class="plot-card" data-domain="{html.escape(benchmark)}">
-              <div class="plot-header">
-                <span>{html.escape(label)}</span>
-                <span class="plot-counter" aria-live="polite"></span>
-              </div>
-              <div class="plot-frame">
-                <button class="plot-arrow plot-prev" type="button" aria-label="Previous {html.escape(label)} plot">&#10094;</button>
-                <img class="plot-image" alt="{html.escape(label)} benchmark plot example" />
-                <div class="plot-empty">No generated plot is available yet.</div>
-                <button class="plot-arrow plot-next" type="button" aria-label="Next {html.escape(label)} plot">&#10095;</button>
-              </div>
-              <div class="plot-caption"></div>
-            </article>
-            """
+    now = time.monotonic()
+    last_tick = float(st.session_state.get("dashboard_gallery_last_tick", now))
+    if not paused and now - last_tick >= 4.5:
+        for benchmark, _ in _DASHBOARD_PLOT_DOMAINS:
+            size = len(examples.get(benchmark, []))
+            if size > 1:
+                positions[benchmark] = (int(positions.get(benchmark, 0)) + 1) % size
+        st.session_state["dashboard_gallery_positions"] = positions
+        st.session_state["dashboard_gallery_last_tick"] = now
+
+    toolbar = st.columns([8, 1.5])
+    with toolbar[1]:
+        st.button(
+            "▶ Resume" if paused else "⏸ Pause",
+            key="dashboard_gallery_pause",
+            use_container_width=True,
+            on_click=_toggle_gallery_pause,
         )
 
-    component_html = f"""
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <style>
-        * {{ box-sizing: border-box; }}
-        body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #252733; background: transparent; }}
-        .gallery-toolbar {{ display: flex; justify-content: flex-end; margin: 0 0 8px; }}
-        .gallery-pause {{ border: 1px solid rgba(37,39,51,.18); border-radius: 9px; background: #fff; color: #252733; padding: 6px 11px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 1px 4px rgba(37,39,51,.08); }}
-        .gallery-pause:hover {{ background: #faf7f5; }}
-        .gallery-pause[aria-pressed="true"] {{ background: #faf7f5; }}
-        .plot-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
-        .plot-card {{ border: 1px solid rgba(37,39,51,.16); border-radius: 14px; overflow: hidden; background: #fff; min-width: 0; }}
-        .plot-header {{ display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; font-size: 14px; font-weight: 800; letter-spacing: .045em; text-transform: uppercase; background: #faf7f5; border-bottom: 1px solid rgba(37,39,51,.10); }}
-        .plot-counter {{ font-size: 11px; font-weight: 700; opacity: .52; letter-spacing: 0; }}
-        .plot-frame {{ position: relative; width: 100%; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; background: #fff; overflow: hidden; }}
-        .plot-image {{ width: 100%; height: 100%; object-fit: contain; padding: 2px; display: none; }}
-        .plot-empty {{ max-width: 72%; text-align: center; font-size: 13px; line-height: 1.4; opacity: .58; }}
-        .plot-arrow {{ position: absolute; z-index: 3; top: 50%; transform: translateY(-50%); width: 36px; height: 44px; border-radius: 9px; border: 1px solid rgba(37,39,51,.18); background: rgba(255,255,255,.88); color: #252733; font-size: 20px; line-height: 1; cursor: pointer; box-shadow: 0 2px 8px rgba(37,39,51,.10); }}
-        .plot-arrow:hover {{ background: #fff; }}
-        .plot-arrow:disabled {{ display: none; }}
-        .plot-prev {{ left: 10px; }}
-        .plot-next {{ right: 10px; }}
-        .plot-caption {{ min-height: 42px; padding: 9px 14px 11px; border-top: 1px solid rgba(37,39,51,.08); font-size: 12px; line-height: 1.35; opacity: .72; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-        @media (max-width: 760px) {{ .plot-grid {{ grid-template-columns: 1fr; }} }}
-      </style>
-    </head>
-    <body>
-      <div class="gallery-toolbar">
-        <button id="gallery-pause" class="gallery-pause" type="button" aria-pressed="false">&#10074;&#10074; Pause</button>
-      </div>
-      <div class="plot-grid">{''.join(cards)}</div>
-      <script>
-        const slides = {payload_json};
-        const positions = Object.fromEntries(Object.keys(slides).map(key => [key, 0]));
-        let paused = false;
+    rows = [
+        _DASHBOARD_PLOT_DOMAINS[:2],
+        _DASHBOARD_PLOT_DOMAINS[2:],
+    ]
+    for row_index, domains in enumerate(rows):
+        columns = st.columns(2, gap="small")
+        for column, (benchmark, label) in zip(columns, domains):
+            with column:
+                with st.container(border=True):
+                    items = examples.get(benchmark, [])
+                    count = len(items)
+                    index = int(positions.get(benchmark, 0)) % count if count else 0
+                    positions[benchmark] = index
 
-        function render(domain) {{
-          const card = document.querySelector(`[data-domain="${{domain}}"]`);
-          const list = slides[domain] || [];
-          const image = card.querySelector('.plot-image');
-          const empty = card.querySelector('.plot-empty');
-          const caption = card.querySelector('.plot-caption');
-          const counter = card.querySelector('.plot-counter');
-          const arrows = card.querySelectorAll('.plot-arrow');
+                    header = st.columns([4, 1])
+                    header[0].markdown(f"**{label.upper()}**")
+                    header[1].caption(f"{index + 1} / {count}" if count else "0 / 0")
 
-          if (!list.length) {{
-            image.style.display = 'none';
-            empty.style.display = 'block';
-            caption.textContent = 'Generate comparison plots to populate this example.';
-            counter.textContent = '0 / 0';
-            arrows.forEach(button => button.disabled = true);
-            return;
-          }}
+                    if count:
+                        current = items[index]
+                        st.image(current["path"], use_container_width=True)
+                        controls = st.columns([1, 5, 1])
+                        controls[0].button(
+                            "❮",
+                            key=f"dashboard_gallery_prev_{benchmark}_{row_index}",
+                            help=f"Previous {label} plot",
+                            disabled=count < 2,
+                            use_container_width=True,
+                            on_click=_step_gallery,
+                            args=(benchmark, -1, count),
+                        )
+                        controls[1].caption(current["title"])
+                        controls[2].button(
+                            "❯",
+                            key=f"dashboard_gallery_next_{benchmark}_{row_index}",
+                            help=f"Next {label} plot",
+                            disabled=count < 2,
+                            use_container_width=True,
+                            on_click=_step_gallery,
+                            args=(benchmark, 1, count),
+                        )
+                    else:
+                        st.info("No generated plot is available yet.")
+                        st.caption("Generate comparison plots to populate this modality.")
 
-          const index = ((positions[domain] % list.length) + list.length) % list.length;
-          positions[domain] = index;
-          const current = list[index];
-          image.src = current.src;
-          image.alt = `${{card.querySelector('.plot-header span').textContent}} — ${{current.title}}`;
-          image.style.display = 'block';
-          empty.style.display = 'none';
-          caption.textContent = current.title;
-          counter.textContent = `${{index + 1}} / ${{list.length}}`;
-          arrows.forEach(button => button.disabled = list.length < 2);
-        }}
-
-        function step(domain, amount) {{
-          const list = slides[domain] || [];
-          if (list.length < 2) return;
-          positions[domain] = (positions[domain] + amount + list.length) % list.length;
-          render(domain);
-        }}
-
-        document.querySelectorAll('.plot-card').forEach(card => {{
-          const domain = card.dataset.domain;
-          card.querySelector('.plot-prev').addEventListener('click', () => step(domain, -1));
-          card.querySelector('.plot-next').addEventListener('click', () => step(domain, 1));
-          render(domain);
-        }});
-
-        const pauseButton = document.getElementById('gallery-pause');
-        pauseButton.addEventListener('click', () => {{
-          paused = !paused;
-          pauseButton.setAttribute('aria-pressed', String(paused));
-          pauseButton.innerHTML = paused ? '&#9654; Resume' : '&#10074;&#10074; Pause';
-        }});
-
-        window.setInterval(() => {{
-          if (paused) return;
-          Object.keys(slides).forEach(domain => step(domain, 1));
-        }}, 5000);
-      </script>
-    </body>
-    </html>
-    """
-
-    # Two complete 16:9 rows plus headers/captions and the pause control.
-    # Plot bytes are loaded lazily through the API instead of being embedded in the
-    # component HTML, so the gallery remains renderable even with hundreds of plots.
-    components.html(component_html, height=1040, scrolling=False)
+    st.session_state["dashboard_gallery_positions"] = positions
 
 def render() -> None:
     st.title("Dashboard")
@@ -335,10 +314,10 @@ def render() -> None:
     with license_col:
         st.markdown("### License")
         st.markdown(
-            "CogScore is distributed under the **MIT License**. "
-            "Copyright © 2024 Leonardo de Lellis Rossi. The software may be used, copied, "
-            "modified, merged, published, distributed, sublicensed, and/or sold under the "
-            "conditions stated in the project LICENSE file."
+            "CogScore is distributed under the **PolyForm Noncommercial License 1.0.0**. "
+            "Noncommercial research and educational use is permitted. Commercial use and resale "
+            "are not permitted. Academic or research use must attribute CogScore and cite the project "
+            "as described in `CITATION.cff`. See the project `LICENSE` and `NOTICE` files for details."
         )
 
     st.caption("CogScore — Online Playground for Cognitive Architecture Evaluation")

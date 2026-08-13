@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use CogScore in academic or research work, please cite it using this metadata."
+title: "CogScore: An Online Evaluation Playground For Cognitive Architectures In Developmental Robotics"
+type: software
+authors:
+  - family-names: "Rossi"
+    given-names: "Leonardo de Lellis"
+year: 2026
+abstract: "Online evaluation playground and benchmark for cognitive architectures in developmental robotics, covering sensory, attention, motivation, and learning domains."

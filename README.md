@@ -6,6 +6,11 @@ This work aims to present a general framework for an online evaluation of differ
 
 [Playground Online](https://affix-decimeter-eradicate.ngrok-free.dev/)
 
+
+## License and citation
+
+CogScore is distributed under the **PolyForm Noncommercial License 1.0.0**. Commercial use and resale are not permitted. Noncommercial research and educational use is permitted under the license terms. When CogScore is used in academic or research work, attribute the project and cite it using the metadata in [`CITATION.cff`](CITATION.cff). See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for the complete terms and attribution notice.
+
 ## Implemented modules
 
 The modules already implemented are colored in the figure CSTReference. Modules that have not yet been implemented are shown in gray.
