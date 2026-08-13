@@ -141,12 +141,16 @@ def _render_plot_examples() -> None:
       <style>
         * {{ box-sizing: border-box; }}
         body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #252733; background: transparent; }}
-        .plot-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
+        .gallery-toolbar {{ display: flex; justify-content: flex-end; margin: 0 0 8px; }}
+        .gallery-pause {{ border: 1px solid rgba(37,39,51,.18); border-radius: 9px; background: #fff; color: #252733; padding: 6px 11px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 1px 4px rgba(37,39,51,.08); }}
+        .gallery-pause:hover {{ background: #faf7f5; }}
+        .gallery-pause[aria-pressed="true"] {{ background: #faf7f5; }}
+        .plot-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
         .plot-card {{ border: 1px solid rgba(37,39,51,.16); border-radius: 14px; overflow: hidden; background: #fff; min-width: 0; }}
         .plot-header {{ display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; font-size: 14px; font-weight: 800; letter-spacing: .045em; text-transform: uppercase; background: #faf7f5; border-bottom: 1px solid rgba(37,39,51,.10); }}
         .plot-counter {{ font-size: 11px; font-weight: 700; opacity: .52; letter-spacing: 0; }}
-        .plot-frame {{ position: relative; width: 100%; aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; background: #fff; overflow: hidden; }}
-        .plot-image {{ width: 100%; height: 100%; object-fit: contain; padding: 8px; display: none; }}
+        .plot-frame {{ position: relative; width: 100%; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; background: #fff; overflow: hidden; }}
+        .plot-image {{ width: 100%; height: 100%; object-fit: contain; padding: 2px; display: none; }}
         .plot-empty {{ max-width: 72%; text-align: center; font-size: 13px; line-height: 1.4; opacity: .58; }}
         .plot-arrow {{ position: absolute; z-index: 3; top: 50%; transform: translateY(-50%); width: 36px; height: 44px; border-radius: 9px; border: 1px solid rgba(37,39,51,.18); background: rgba(255,255,255,.88); color: #252733; font-size: 20px; line-height: 1; cursor: pointer; box-shadow: 0 2px 8px rgba(37,39,51,.10); }}
         .plot-arrow:hover {{ background: #fff; }}
@@ -158,10 +162,14 @@ def _render_plot_examples() -> None:
       </style>
     </head>
     <body>
+      <div class="gallery-toolbar">
+        <button id="gallery-pause" class="gallery-pause" type="button" aria-pressed="false">&#10074;&#10074; Pause</button>
+      </div>
       <div class="plot-grid">{''.join(cards)}</div>
       <script>
         const slides = {payload_json};
         const positions = Object.fromEntries(Object.keys(slides).map(key => [key, 0]));
+        let paused = false;
 
         function render(domain) {{
           const card = document.querySelector(`[data-domain="${{domain}}"]`);
@@ -207,7 +215,15 @@ def _render_plot_examples() -> None:
           render(domain);
         }});
 
+        const pauseButton = document.getElementById('gallery-pause');
+        pauseButton.addEventListener('click', () => {{
+          paused = !paused;
+          pauseButton.setAttribute('aria-pressed', String(paused));
+          pauseButton.innerHTML = paused ? '&#9654; Resume' : '&#10074;&#10074; Pause';
+        }});
+
         window.setInterval(() => {{
+          if (paused) return;
           Object.keys(slides).forEach(domain => step(domain, 1));
         }}, 5000);
       </script>
@@ -215,8 +231,8 @@ def _render_plot_examples() -> None:
     </html>
     """
 
-    # Two rows of 4:3 cards plus headers/captions. The component itself handles the 2x2 layout.
-    components.html(component_html, height=1040, scrolling=False)
+    # Compact two-row 16:9 gallery plus headers/captions and the pause control.
+    components.html(component_html, height=790, scrolling=False)
 
 def render() -> None:
     st.title("Dashboard")
