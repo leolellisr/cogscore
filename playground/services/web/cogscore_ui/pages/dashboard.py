@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import base64
 import html
 import json
-import mimetypes
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 import pandas as pd
@@ -18,7 +17,6 @@ from ..common import (
     format_datetime,
     navigate,
     render_exception,
-    resolve_data_path,
     status_badge,
 )
 
@@ -52,14 +50,11 @@ def _plot_title(item: dict[str, Any]) -> str:
     return Path(str(item.get("name") or "Plot")).stem.replace("_", " ").title()
 
 
-def _image_data_uri(path: Path) -> str | None:
-    try:
-        raw = path.read_bytes()
-    except OSError:
+def _plot_image_url(item: dict[str, Any]) -> str | None:
+    relative_path = str(item.get("relative_path") or "").strip().replace("\\", "/")
+    if not relative_path or relative_path.startswith("/") or ".." in Path(relative_path).parts:
         return None
-    mime = mimetypes.guess_type(path.name)[0] or "image/png"
-    encoded = base64.b64encode(raw).decode("ascii")
-    return f"data:{mime};base64,{encoded}"
+    return "/api/plot-files/" + quote(relative_path, safe="/")
 
 
 def _dashboard_plot_examples(items: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
@@ -73,14 +68,11 @@ def _dashboard_plot_examples(items: list[dict[str, Any]]) -> dict[str, list[dict
         extension = str(item.get("extension") or "").lower()
         if extension not in _DASHBOARD_IMAGE_EXTENSIONS:
             continue
-        path = resolve_data_path(str(item.get("path") or ""))
-        if not path.is_file():
-            continue
         title = _plot_title(item)
-        uri = _image_data_uri(path)
-        if not uri:
+        image_url = _plot_image_url(item)
+        if not image_url:
             continue
-        examples[benchmark].append({"src": uri, "title": title})
+        examples[benchmark].append({"src": image_url, "title": title})
 
     return examples
 
@@ -225,7 +217,8 @@ def _render_plot_examples() -> None:
     """
 
     # Two complete 16:9 rows plus headers/captions and the pause control.
-    # The previous 790px iframe clipped the lower row on wide/full-screen layouts.
+    # Plot bytes are loaded lazily through the API instead of being embedded in the
+    # component HTML, so the gallery remains renderable even with hundreds of plots.
     components.html(component_html, height=1040, scrolling=False)
 
 def render() -> None:

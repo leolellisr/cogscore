@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .config import (
     ARCHITECTURES_DIR,
@@ -642,6 +643,22 @@ def simulator_control(request: SimulatorControlRequest) -> SimulatorControlRespo
         job_id=job_id,
         message=f"Simulator {request.action} job created.",
     )
+
+
+@app.get("/plot-files/{relative_path:path}")
+def get_plot_file(relative_path: str) -> FileResponse:
+    ensure_storage_dirs()
+    requested = (PLOTS_DIR / relative_path).resolve()
+    plots_root = PLOTS_DIR.resolve()
+    try:
+        requested.relative_to(plots_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Plot file not found.") from exc
+    if not requested.is_file():
+        raise HTTPException(status_code=404, detail="Plot file not found.")
+    if requested.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}:
+        raise HTTPException(status_code=404, detail="Plot file not found.")
+    return FileResponse(requested)
 
 
 @app.get("/plots")
