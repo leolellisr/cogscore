@@ -4,3 +4,7 @@ temp/
 *.tmp
 
 /playground/vendor/CoppeliaSim_Edu_V4_3_0_Ubuntu20_04.tar.xz
+playground/.env
+playground/.env.*
+!playground/.env.example
+!playground/.env.public.example

@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import base64
+import html
+import json
+import mimetypes
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from .. import api_client
 from ..common import (
@@ -10,9 +18,205 @@ from ..common import (
     format_datetime,
     navigate,
     render_exception,
+    resolve_data_path,
     status_badge,
 )
 
+
+
+_DASHBOARD_PLOT_DOMAINS = [
+    ("sensory_buffer", "Sensory"),
+    ("attention_posner", "Attention"),
+    ("motivation", "Motivation"),
+    ("learning", "Learning"),
+]
+_DASHBOARD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+_DASHBOARD_MAX_EXAMPLES = 8
+
+
+def _plot_benchmark_id(item: dict[str, Any]) -> str:
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        benchmark = metadata.get("benchmark")
+        if isinstance(benchmark, dict) and benchmark.get("id"):
+            return str(benchmark["id"])
+    relative = str(item.get("relative_path", ""))
+    return relative.split("/", 1)[0] if relative else ""
+
+
+def _plot_title(item: dict[str, Any]) -> str:
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        plot = metadata.get("plot")
+        if isinstance(plot, dict) and plot.get("title"):
+            return str(plot["title"])
+    return Path(str(item.get("name") or "Plot")).stem.replace("_", " ").title()
+
+
+def _image_data_uri(path: Path) -> str | None:
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _dashboard_plot_examples(items: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    examples = {benchmark: [] for benchmark, _ in _DASHBOARD_PLOT_DOMAINS}
+    seen: dict[str, set[str]] = {benchmark: set() for benchmark, _ in _DASHBOARD_PLOT_DOMAINS}
+
+    # /plots is already newest-first. Keeping that order means the dashboard automatically
+    # follows the newest generated comparison without requiring a separate configuration file.
+    for item in items:
+        benchmark = _plot_benchmark_id(item)
+        if benchmark not in examples or len(examples[benchmark]) >= _DASHBOARD_MAX_EXAMPLES:
+            continue
+        extension = str(item.get("extension") or "").lower()
+        if extension not in _DASHBOARD_IMAGE_EXTENSIONS:
+            continue
+        path = resolve_data_path(str(item.get("path") or ""))
+        if not path.is_file():
+            continue
+        title = _plot_title(item)
+        # Avoid filling a carousel with the same logical measure from older generations.
+        if title in seen[benchmark]:
+            continue
+        uri = _image_data_uri(path)
+        if not uri:
+            continue
+        seen[benchmark].add(title)
+        examples[benchmark].append({"src": uri, "title": title})
+
+    return examples
+
+
+def _render_plot_examples() -> None:
+    st.subheader("Benchmark plot examples")
+    st.caption(
+        "Examples from the four CogScore modalities. Use the arrows to browse; "
+        "the gallery also advances automatically every 5 seconds."
+    )
+
+    try:
+        plot_items = api_client.get("/plots")
+        if not isinstance(plot_items, list):
+            plot_items = []
+    except Exception:
+        plot_items = []
+
+    examples = _dashboard_plot_examples(plot_items)
+    payload = {
+        benchmark: examples.get(benchmark, [])
+        for benchmark, _ in _DASHBOARD_PLOT_DOMAINS
+    }
+    payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+
+    cards = []
+    for benchmark, label in _DASHBOARD_PLOT_DOMAINS:
+        cards.append(
+            f"""
+            <article class="plot-card" data-domain="{html.escape(benchmark)}">
+              <div class="plot-header">
+                <span>{html.escape(label)}</span>
+                <span class="plot-counter" aria-live="polite"></span>
+              </div>
+              <div class="plot-frame">
+                <button class="plot-arrow plot-prev" type="button" aria-label="Previous {html.escape(label)} plot">&#10094;</button>
+                <img class="plot-image" alt="{html.escape(label)} benchmark plot example" />
+                <div class="plot-empty">No generated plot is available yet.</div>
+                <button class="plot-arrow plot-next" type="button" aria-label="Next {html.escape(label)} plot">&#10095;</button>
+              </div>
+              <div class="plot-caption"></div>
+            </article>
+            """
+        )
+
+    component_html = f"""
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        * {{ box-sizing: border-box; }}
+        body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #252733; background: transparent; }}
+        .plot-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
+        .plot-card {{ border: 1px solid rgba(37,39,51,.16); border-radius: 14px; overflow: hidden; background: #fff; min-width: 0; }}
+        .plot-header {{ display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; font-size: 14px; font-weight: 800; letter-spacing: .045em; text-transform: uppercase; background: #faf7f5; border-bottom: 1px solid rgba(37,39,51,.10); }}
+        .plot-counter {{ font-size: 11px; font-weight: 700; opacity: .52; letter-spacing: 0; }}
+        .plot-frame {{ position: relative; width: 100%; aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; background: #fff; overflow: hidden; }}
+        .plot-image {{ width: 100%; height: 100%; object-fit: contain; padding: 8px; display: none; }}
+        .plot-empty {{ max-width: 72%; text-align: center; font-size: 13px; line-height: 1.4; opacity: .58; }}
+        .plot-arrow {{ position: absolute; z-index: 3; top: 50%; transform: translateY(-50%); width: 36px; height: 44px; border-radius: 9px; border: 1px solid rgba(37,39,51,.18); background: rgba(255,255,255,.88); color: #252733; font-size: 20px; line-height: 1; cursor: pointer; box-shadow: 0 2px 8px rgba(37,39,51,.10); }}
+        .plot-arrow:hover {{ background: #fff; }}
+        .plot-arrow:disabled {{ display: none; }}
+        .plot-prev {{ left: 10px; }}
+        .plot-next {{ right: 10px; }}
+        .plot-caption {{ min-height: 42px; padding: 9px 14px 11px; border-top: 1px solid rgba(37,39,51,.08); font-size: 12px; line-height: 1.35; opacity: .72; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+        @media (max-width: 760px) {{ .plot-grid {{ grid-template-columns: 1fr; }} }}
+      </style>
+    </head>
+    <body>
+      <div class="plot-grid">{''.join(cards)}</div>
+      <script>
+        const slides = {payload_json};
+        const positions = Object.fromEntries(Object.keys(slides).map(key => [key, 0]));
+
+        function render(domain) {{
+          const card = document.querySelector(`[data-domain="${{domain}}"]`);
+          const list = slides[domain] || [];
+          const image = card.querySelector('.plot-image');
+          const empty = card.querySelector('.plot-empty');
+          const caption = card.querySelector('.plot-caption');
+          const counter = card.querySelector('.plot-counter');
+          const arrows = card.querySelectorAll('.plot-arrow');
+
+          if (!list.length) {{
+            image.style.display = 'none';
+            empty.style.display = 'block';
+            caption.textContent = 'Generate comparison plots to populate this example.';
+            counter.textContent = '0 / 0';
+            arrows.forEach(button => button.disabled = true);
+            return;
+          }}
+
+          const index = ((positions[domain] % list.length) + list.length) % list.length;
+          positions[domain] = index;
+          const current = list[index];
+          image.src = current.src;
+          image.alt = `${{card.querySelector('.plot-header span').textContent}} — ${{current.title}}`;
+          image.style.display = 'block';
+          empty.style.display = 'none';
+          caption.textContent = current.title;
+          counter.textContent = `${{index + 1}} / ${{list.length}}`;
+          arrows.forEach(button => button.disabled = list.length < 2);
+        }}
+
+        function step(domain, amount) {{
+          const list = slides[domain] || [];
+          if (list.length < 2) return;
+          positions[domain] = (positions[domain] + amount + list.length) % list.length;
+          render(domain);
+        }}
+
+        document.querySelectorAll('.plot-card').forEach(card => {{
+          const domain = card.dataset.domain;
+          card.querySelector('.plot-prev').addEventListener('click', () => step(domain, -1));
+          card.querySelector('.plot-next').addEventListener('click', () => step(domain, 1));
+          render(domain);
+        }});
+
+        window.setInterval(() => {{
+          Object.keys(slides).forEach(domain => step(domain, 1));
+        }}, 5000);
+      </script>
+    </body>
+    </html>
+    """
+
+    # Two rows of 4:3 cards plus headers/captions. The component itself handles the 2x2 layout.
+    components.html(component_html, height=1040, scrolling=False)
 
 def render() -> None:
     st.title("Dashboard")
@@ -102,6 +306,8 @@ def render() -> None:
                 navigate("Experiment runs")
         else:
             st.info("No online experiment runs have been created yet.")
+
+    _render_plot_examples()
 
     with st.expander("Technical service details"):
         st.json(
