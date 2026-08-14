@@ -18,6 +18,20 @@ BENCHMARK_TO_DOMAIN = {
     "motivation": "motivation",
     "learning": "learning",
 }
+# Different benchmark bundles may use historical names for the same logical
+# architecture. Canonicalize them before grouping runs so one CogScore matrix
+# can combine results produced under either spelling.
+AGENT_ALIASES = {
+    "Substage1_DQN": "Substage1",
+    "Substage3_DQN": "Substage3",
+}
+
+
+def _canonical_agent_name(agent_name: str) -> str:
+    name = str(agent_name or "").strip()
+    return AGENT_ALIASES.get(name, name)
+
+
 COORDINATE_LABELS = {
     "sensing": [
         "Initial visual fidelity",
@@ -278,14 +292,18 @@ def _latest_runs_by_agent() -> dict[str, dict[str, dict[str, Any]]]:
     latest: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for run in list_runs():
         benchmark = str(run.get("benchmark") or "")
-        agent = str(run.get("agent_name") or "")
+        source_agent = str(run.get("agent_name") or "").strip()
+        agent = _canonical_agent_name(source_agent)
         if benchmark not in SCORERS or not agent:
             continue
         current = latest[agent].get(benchmark)
         stamp = str(run.get("created_at") or run.get("run_date") or "")
         current_stamp = str(current.get("created_at") or current.get("run_date") or "") if current else ""
         if current is None or stamp > current_stamp:
-            latest[agent][benchmark] = run
+            normalized_run = dict(run)
+            normalized_run["source_agent_name"] = source_agent
+            normalized_run["canonical_agent_name"] = agent
+            latest[agent][benchmark] = normalized_run
     return dict(latest)
 
 
@@ -298,14 +316,33 @@ def compute_matrices() -> dict[str, Any]:
             domain = BENCHMARK_TO_DOMAIN[benchmark]
             root = _resolve_result_path(str(run.get("benchmark_out_path") or run.get("storage_path") or ""))
             if root.is_file() and root.suffix.lower() == ".zip":
-                provenance[domain] = {"run_id": run.get("id"), "path": str(root), "warning": "ZIP-only result; extract/import it before matrix computation."}
+                provenance[domain] = {
+                    "run_id": run.get("id"),
+                    "source_agent_name": run.get("source_agent_name") or run.get("agent_name"),
+                    "canonical_agent_name": agent_name,
+                    "path": str(root),
+                    "warning": "ZIP-only result; extract/import it before matrix computation.",
+                }
                 continue
             if not root.is_dir():
-                provenance[domain] = {"run_id": run.get("id"), "path": str(root), "warning": "Result directory is unavailable."}
+                provenance[domain] = {
+                    "run_id": run.get("id"),
+                    "source_agent_name": run.get("source_agent_name") or run.get("agent_name"),
+                    "canonical_agent_name": agent_name,
+                    "path": str(root),
+                    "warning": "Result directory is unavailable.",
+                }
                 continue
             scores, details = SCORERS[benchmark](root)
             matrix[domain] = [round(v, 6) if v is not None else None for v in scores]
-            provenance[domain] = {"run_id": run.get("id"), "benchmark": benchmark, "path": str(root), **details}
+            provenance[domain] = {
+                "run_id": run.get("id"),
+                "benchmark": benchmark,
+                "source_agent_name": run.get("source_agent_name") or run.get("agent_name"),
+                "canonical_agent_name": agent_name,
+                "path": str(root),
+                **details,
+            }
         observed = [v for row in matrix.values() for v in row if v is not None]
         agents.append({
             "agent_name": agent_name,

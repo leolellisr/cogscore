@@ -47,8 +47,11 @@ def render() -> None:
     c3.metric("Mean observed score", "N/A" if mean is None else f"{float(mean):.3f}")
 
     frame = _matrix_frame(item, labels)
+    # Keep the matrix renderer dependency-free. Pandas gradient styling
+    # requires matplotlib, which is intentionally not part of the lightweight web
+    # image. Numeric formatting alone is enough for the interactive dataframe.
     st.dataframe(
-        frame.style.format(lambda v: "N/A" if pd.isna(v) else f"{float(v):.3f}").background_gradient(axis=None, vmin=0.0, vmax=1.0),
+        frame.style.format(lambda v: "N/A" if pd.isna(v) else f"{float(v):.3f}"),
         use_container_width=True,
     )
     st.caption("N/A means that no readable stored result exists for that agent/cell. It is not converted to zero.")
