@@ -58,6 +58,7 @@ from .schemas import (
 from .plot_metadata import build_plot_metadata
 
 from .services.storage import import_result_bundle
+from .cogscore_matrix import compute_matrices
 app = FastAPI(
     title="CogScore Online Runner API",
     description="API for validating external architectures and running CogScore experiments online.",
@@ -560,6 +561,13 @@ def dashboard_summary() -> dict[str, Any]:
         "recent_runs": experiment_runs[:8],
     }
 
+
+
+
+@app.get("/cogscore/matrices")
+def api_cogscore_matrices() -> dict[str, Any]:
+    """Compute CogScore matrices from the latest stored result of each imported agent."""
+    return compute_matrices()
 
 @app.get("/runs")
 def api_list_imported_runs() -> list[dict[str, Any]]:

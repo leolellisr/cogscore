@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from cogscore_ui.common import apply_theme, navigate, require_optional_login, NAV_PAGES
-from cogscore_ui.pages import assets, dashboard, experiments, help, operations, plots, simulator
+from cogscore_ui.pages import assets, dashboard, experiments, help, matrices, operations, plots, simulator
 
 
 st.set_page_config(
@@ -95,13 +95,9 @@ def top_navigation() -> None:
             )
 
     with analysis_col:
-        st.button(
-            "Analysis & Plots",
-            key="nav_plots",
-            use_container_width=True,
-            on_click=navigate,
-            args=("Plots",),
-        )
+        with st.popover("Analysis", use_container_width=True):
+            st.button("Plots", key="nav_plots", use_container_width=True, on_click=navigate, args=("Plots",))
+            st.button("CogScore matrices", key="nav_matrices", use_container_width=True, on_click=navigate, args=("CogScore matrices",))
 
     with operations_col:
         with st.popover("Operations", use_container_width=True):
@@ -153,6 +149,8 @@ elif page == "Experiment runs":
     operations.render_runs()
 elif page == "Plots":
     plots.render()
+elif page == "CogScore matrices":
+    matrices.render()
 elif page == "Jobs":
     operations.render_jobs()
 elif page == "Simulator":

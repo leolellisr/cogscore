@@ -66,6 +66,7 @@ NAVIGATION = [
     ("New experiment", "Experiments"),
     ("Experiment runs", "Experiments"),
     ("Plots", "Analysis"),
+    ("CogScore matrices", "Analysis"),
     ("Jobs", "Operations"),
     ("Simulator", "Operations"),
     ("Documentation", "Help"),
