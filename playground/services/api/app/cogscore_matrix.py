@@ -22,14 +22,18 @@ BENCHMARK_TO_DOMAIN = {
 # architecture. Canonicalize them before grouping runs so one CogScore matrix
 # can combine results produced under either spelling.
 AGENT_ALIASES = {
-    "Substage1_DQN": "Substage1",
-    "Substage3_DQN": "Substage3",
+    **{f"Substage{i}": f"CS{i}" for i in range(1, 6)},
+    **{f"Substage{i}_DQN": f"CS{i}" for i in range(1, 6)},
+    "Substage1_QL": "CS6", "1st_ql": "CS6",
+    "Substage2_QL": "CS7", "2nd_ql": "CS7",
+    "Substage3_QL": "CS8", "3rd_ql": "CS8",
+    "Substage1_QL_Noise": "CS6_nEC", "1st_ql_noise": "CS6_nEC",
+    "Substage1_Theoretic": "CS1_T", "Substage3_Theoretic": "CS3_T",
 }
-
 
 def _canonical_agent_name(agent_name: str) -> str:
     name = str(agent_name or "").strip()
-    return AGENT_ALIASES.get(name, name)
+    return AGENT_ALIASES.get(name, AGENT_ALIASES.get(name.lower(), name))
 
 
 COORDINATE_LABELS = {

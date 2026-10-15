@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from agent_names import relabel_figure
+
 import argparse
 import math
 from collections import defaultdict
@@ -314,6 +316,7 @@ def finish_plot(
 
 def save_figure(fig: plt.Figure, base_path: Path, save_pdf: bool) -> None:
     base_path.parent.mkdir(parents=True, exist_ok=True)
+    relabel_figure(fig)
     fig.tight_layout()
     png_path = base_path.with_suffix(".png")
     fig.savefig(png_path, dpi=200, bbox_inches="tight")

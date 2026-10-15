@@ -1,0 +1,84 @@
+--- a/playground/docs/migracao_nomenclatura_cs.md
++++ b/playground/docs/migracao_nomenclatura_cs.md
+@@ -6,9 +6,11 @@
+ 
+ | Nome de exibição | Identificadores de origem aceitos |
+ | --- | --- |
+-| CS1 | Substage1, Substage1_DQN |
++| CS1 | Substage1, Substage1_DQN |
++| CS1_T | Substage1_Theoretic |
+ | CS2 | Substage2, Substage2_DQN |
+-| CS3 | Substage3, Substage3_DQN |
++| CS3 | Substage3, Substage3_DQN |
++| CS3_T | Substage3_Theoretic |
+ | CS4 | Substage4, Substage4_DQN |
+ | CS5 | Substage5, Substage5_DQN |
+ | CS6 | Substage1_QL, 1st_ql |
+@@ -16,7 +16,7 @@
+ | CS8 | Substage3_QL, 3rd_ql |
+ | CS6_nEC | Substage1_QL_Noise, 1st_ql_noise |
+ 
+-A substituição acontece **somente na apresentação** das figuras geradas pelos quatro scripts de comparação (`scripts/{sperling,posner,mot,learning}.py`) e na identificação canônica usada para agrupar as matrizes CogScore. Aliases não listados permanecem inalterados (em particular, agentes `_Theoretic`, que não devem ser confundidos com medições reais). Resultados importados anteriormente mantêm o nome bruto para proveniência. A grafia `CS6_nEC` é exibida exatamente como solicitada, sem inferir o significado de `nEC`.
++A substituição acontece **somente na apresentação** das figuras geradas pelos quatro scripts de comparação (`scripts/{sperling,posner,mot,learning}.py`) e na identificação canônica usada para agrupar as matrizes CogScore. Aliases não listados permanecem inalterados. Os aliases históricos `Substage1_Theoretic` e `Substage3_Theoretic` são exibidos como `CS1_T` e `CS3_T` respectivamente, sem modificar a origem ou caracterização dos respectivos resultados. Resultados importados anteriormente mantêm o nome bruto para proveniência. A grafia `CS6_nEC` é exibida exatamente como solicitada, sem inferir o significado de `nEC`.
+ 
+ ## Aplicação (pasta `cogscore/` do repositório)
+ 
+@@ -39,3 +39,7 @@
+ ## Notas sobre limites
+ 
+ Os `.png` existentes são artefatos rasterizados; a mudança dos scripts só aparece ao **regenerá-los**. O patch não repinta nem altera os PNGs de origem. Os diretórios de `data/` e os IDs de jobs permanecem como estavam. Metadados gerados por etapas externas ao replot podem preservar IDs históricos: isso é intencional para a rastreabilidade.
++
++## Complemento incremental: variantes `_Theoretic`
++
++Os identificadores históricos `Substage1_Theoretic` e `Substage3_Theoretic` também são normalizados para `CS1_T` e `CS3_T` em legendas e matrizes. As variantes teóricas permanecem distintas das estratégias DQN (`CS1` e `CS3`) também na identificação canônica usada pelas matrizes. Os IDs históricos continuam disponíveis para proveniência. Nenhum registro bruto é reescrito.
+--- a/playground/scripts/agent_names.py
++++ b/playground/scripts/agent_names.py
+@@ -13,6 +13,7 @@
+     "Substage2_QL": "CS7", "2nd_ql": "CS7",
+     "Substage3_QL": "CS8", "3rd_ql": "CS8",
+     "Substage1_QL_Noise": "CS6_nEC", "1st_ql_noise": "CS6_nEC",
++    "Substage1_Theoretic": "CS1_T", "Substage3_Theoretic": "CS3_T",
+ }
+ # Prevent partial matches (e.g. Substage1 inside Substage1_QL_Noise).
+ _PATTERN = re.compile(r"(?<![A-Za-z0-9_])(?:" + "|".join(
+--- a/playground/services/api/app/cogscore_matrix.py
++++ b/playground/services/api/app/cogscore_matrix.py
+@@ -28,6 +28,7 @@
+     "Substage2_QL": "CS7", "2nd_ql": "CS7",
+     "Substage3_QL": "CS8", "3rd_ql": "CS8",
+     "Substage1_QL_Noise": "CS6_nEC", "1st_ql_noise": "CS6_nEC",
++    "Substage1_Theoretic": "CS1_T", "Substage3_Theoretic": "CS3_T",
+ }
+ 
+ def _canonical_agent_name(agent_name: str) -> str:
+--- a/playground/tests/test_agent_names.py
++++ b/playground/tests/test_agent_names.py
+@@ -12,7 +12,8 @@
+ 
+ def test_no_partial_replacement():
+     assert display_agent("Substage1_QL_Noise") == "CS6_nEC"
+-    assert display_agent("Substage1_Theoretic") == "Substage1_Theoretic"
++    assert display_agent("Substage1_Theoretic") == "CS1_T"
++    assert display_agent("Substage3_Theoretic") == "CS3_T"
+     assert display_agent("Substage10") == "Substage10"
+     assert display_agent("mean_reward") == "mean_reward"
+ 
+@@ -29,3 +30,18 @@
+     assert list(line.get_xdata()) == list(before[0])
+     assert list(line.get_ydata()) == list(before[1])
+     plt.close(fig)
++
++
++def test_theoretic_plot_labels_keep_numerical_series():
++    import matplotlib
++    matplotlib.use("Agg")
++    import matplotlib.pyplot as plt
++    fig, ax = plt.subplots()
++    a, = ax.plot([1, 2, 3], [0.1, 0.4, 0.2], label="Substage1_Theoretic")
++    b, = ax.plot([1, 2, 3], [0.3, 0.2, 0.6], label="Substage3_Theoretic")
++    old = [(tuple(x.get_xdata()), tuple(x.get_ydata())) for x in (a, b)]
++    ax.legend()
++    relabel_figure(fig)
++    assert [t.get_text() for t in ax.get_legend().get_texts()] == ["CS1_T", "CS3_T"]
++    assert old == [(tuple(x.get_xdata()), tuple(x.get_ydata())) for x in (a, b)]
++    plt.close(fig)

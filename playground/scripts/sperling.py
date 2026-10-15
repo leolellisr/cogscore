@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from agent_names import relabel_figure
+
 import argparse
 import re
 from pathlib import Path
@@ -803,6 +805,7 @@ def plot_fidelity_line(
     ax.grid(True, alpha=0.3)
     ax.legend(title="Agent")
 
+    relabel_figure(fig)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"[ok] saved: {out_path}")
@@ -922,6 +925,7 @@ def plot_mse_line(
     ax.grid(True, alpha=0.3, which="both")
     ax.legend(title="Agent")
 
+    relabel_figure(fig)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"[ok] saved: {out_path}")
@@ -1027,6 +1031,7 @@ def plot_fidelity_boxplot(
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(handles=legend_handles, title="Agent")
 
+    relabel_figure(fig)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"[ok] saved: {out_path}")
@@ -1087,6 +1092,7 @@ def plot_heatmaps(per_trial: pd.DataFrame, out_dir: Path) -> list[Path]:
         colorbar.set_label("Mean distance MSE")
 
         out_path = out_dir / f"patch_error_heatmap_{agent}.png"
+        relabel_figure(fig)
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
 

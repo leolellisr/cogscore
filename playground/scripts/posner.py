@@ -36,6 +36,8 @@ Dependencies:
 
 from __future__ import annotations
 
+from agent_names import relabel_figure
+
 import argparse
 import sys
 from pathlib import Path
@@ -209,6 +211,7 @@ def ensure_output_dir(path: Path) -> None:
 
 
 def save_plot(path: Path, show: bool) -> None:
+    relabel_figure(plt.gcf())
     plt.tight_layout()
     plt.savefig(path, dpi=180, bbox_inches="tight")
     print(f"[SAVED] {path.resolve()}")
